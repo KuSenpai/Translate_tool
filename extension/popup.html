@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font: 13px/1.45 "Segoe UI", Arial, sans-serif; width: 300px; margin: 12px; color: #222; }
+    h1 { font-size: 14px; margin: 0 0 8px; }
+    input { width: 100%; box-sizing: border-box; padding: 5px 6px; margin: 4px 0 8px; }
+    button { padding: 5px 10px; margin-right: 4px; cursor: pointer; }
+    .ok { color: #1c7c3c; } .bad { color: #b3261e; } .muted { color: #666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>📖 Novel Translator – Wattpad Helper</h1>
+  <div id="status">Đang kiểm tra kết nối…</div>
+  <label class="muted">Địa chỉ tool trên máy:</label>
+  <input id="app" placeholder="http://127.0.0.1:8765">
+  <button id="save">Lưu</button>
+  <button id="diag" title="Gửi cấu trúc trang Wattpad đang mở về tool (để sửa lỗi khi Wattpad đổi giao diện)">Gửi chẩn đoán trang</button>
+  <p class="muted" id="msg"></p>
+  <p class="muted">Mở <b>wattpad.com/myworks</b> để gửi danh sách truyện về tool. Khi bạn bấm Publish trong tool,
+    tab Wattpad sẽ tự được điền và đăng. Extension không đọc mật khẩu hay cookie.</p>
+  <script src="popup.js"></script>
+</body>
+</html>

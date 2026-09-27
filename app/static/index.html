@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Novel Translator</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">📖 Novel Translator</div>
+  <div class="file-info" id="fileInfo">Chưa mở file</div>
+  <div class="spacer"></div>
+  <select id="recentProjects" title="Mở lại project gần đây"><option value="">Project gần đây…</option></select>
+  <span class="ai-state" id="aiState" title="Trạng thái AI"></span>
+</header>
+
+<div id="toast" class="toast hidden" role="status"></div>
+
+<!-- ============ OPEN / CHAPTER SELECT ============ -->
+<section id="viewHome" class="view">
+  <div class="card hidden" id="libraryCard">
+    <h2>📚 Thư viện</h2>
+    <div id="libraryList" class="library"></div>
+  </div>
+
+  <div class="card">
+    <h2>1. Mở file Word</h2>
+    <div class="open-row">
+      <label class="dropzone" id="dropzone">
+        <input type="file" id="fileInput" accept=".docx" hidden>
+        <span>Kéo thả <b>.docx</b> vào đây hoặc <u>chọn file</u></span>
+      </label>
+      <div class="or">hoặc</div>
+      <form id="pathForm" class="path-form">
+        <input id="pathInput" placeholder="Đường dẫn file, ví dụ D:\Truyen\book.docx" autocomplete="off">
+        <button type="submit">Mở</button>
+      </form>
+    </div>
+    <p class="muted small">File gốc không bao giờ bị ghi đè. Mở bằng đường dẫn sẽ luôn đọc bản mới nhất của file.</p>
+  </div>
+
+  <div class="card hidden" id="chapterCard">
+    <div class="row-between">
+      <h2>2. Chọn chương</h2>
+      <button class="ghost small" id="reloadBtn" title="Đọc lại file Word">↻ Đọc lại file</button>
+    </div>
+    <form id="chapterForm" class="chapter-form">
+      <label>Chương: <input id="chapterInput" type="number" min="0" required></label>
+      <button type="submit" class="primary">Load Chapter</button>
+    </form>
+    <div id="docWarnings"></div>
+    <div class="legend small muted">
+      <span class="chip conf-high">đủ Hàn + Việt</span>
+      <span class="chip conf-medium">có cảnh báo</span>
+      <span class="chip conf-low">cần kiểm tra</span>
+      <span class="dot st-EDITING"></span>đang sửa
+      <span class="dot st-REVIEWED"></span>đã review
+      <span class="dot st-READY_TO_PUBLISH"></span>sẵn sàng
+      <span class="dot st-PUBLISHED"></span>đã đăng
+    </div>
+    <div id="chapterList" class="chapter-list"></div>
+  </div>
+</section>
+
+<!-- ============ EDITOR ============ -->
+<section id="viewEditor" class="view hidden">
+  <div class="editor-head">
+    <button class="ghost" id="backHome">← Chương</button>
+    <input id="titleInput" class="title-input" placeholder="Tiêu đề chương">
+    <span class="badge" id="statusBadge"></span>
+    <span class="dirty hidden" id="dirtyMark">● chưa lưu</span>
+  </div>
+  <div class="toolbar">
+    <button id="saveBtn" class="primary" title="Ctrl+S">💾 Save Draft</button>
+    <button id="undoBtn" title="Ctrl+Z">↶ Undo</button>
+    <button id="redoBtn" title="Ctrl+Y">↷ Redo</button>
+    <button id="resetBtn" title="Lấy lại bản dịch gốc trong Word">⟲ Reset</button>
+    <span class="sep"></span>
+    <button id="boldBtn" title="In đậm (Ctrl+B)"><b>B</b></button>
+    <button id="italicBtn" title="In nghiêng (Ctrl+I)"><i>I</i></button>
+    <span class="sep"></span>
+    <button id="suggestBtn" class="ai" title="Chọn một đoạn văn bản trong bản Việt rồi bấm">✨ Suggest correction</button>
+    <span class="spacer"></span>
+    <button id="previewBtn" class="primary">Preview →</button>
+  </div>
+  <div id="chapterWarnings"></div>
+  <div class="variant-row hidden" id="variantRow"></div>
+
+  <div class="workspace">
+    <div class="pane">
+      <div class="pane-head">Korean Original <span class="muted small" id="koMeta"></span></div>
+      <div class="pane-body ko" id="koPane"></div>
+    </div>
+    <div class="pane">
+      <div class="pane-head">Vietnamese Translation <span class="muted small" id="viMeta"></span></div>
+      <div class="pane-body vi" id="viEditor" contenteditable="true" spellcheck="false"></div>
+      <div class="lock-overlay hidden" id="lockOverlay">
+        <div>
+          <p><b>⚠ Parser không chắc chắn về ranh giới chương này.</b></p>
+          <p class="small">Hãy đọc các cảnh báo phía trên và đối chiếu nội dung trước khi sửa.</p>
+          <button class="primary" id="ackBtn">Tôi đã kiểm tra — tiếp tục sửa</button>
+        </div>
+      </div>
+    </div>
+    <aside class="side">
+      <nav class="tabs">
+        <button data-tab="ai" class="active">✨ AI</button>
+        <button data-tab="glossary">Glossary</button>
+        <button data-tab="issues">Lỗi <span id="issueCount" class="count"></span></button>
+      </nav>
+      <div class="tab" id="tab-ai">
+        <label class="small">Yêu cầu thêm (tuỳ chọn)
+          <input id="aiInstruction" placeholder="vd: sửa xưng hô cho tự nhiên">
+        </label>
+        <div id="aiResult" class="muted small">Chọn (bôi đen) một đoạn trong bản Việt rồi bấm <b>✨ Suggest correction</b>.
+          AI chỉ gợi ý — bạn quyết định có Apply hay không.</div>
+      </div>
+      <div class="tab hidden" id="tab-glossary">
+        <p class="small muted">Nguồn → cách dịch ưu tiên. Được gửi kèm cho AI và dùng để kiểm tra nhất quán.</p>
+        <form id="glossaryForm" class="glossary-form">
+          <input name="source" placeholder="Nguồn (김수현, 형…)" required>
+          <input name="target" placeholder="Dịch (Kim Soo-hyun, anh…)" required>
+          <input name="avoid" placeholder="Tránh dùng (phân tách bằng dấu phẩy)">
+          <input name="note" placeholder="Ghi chú">
+          <button type="submit">+ Thêm</button>
+        </form>
+        <div id="glossaryList"></div>
+      </div>
+      <div class="tab hidden" id="tab-issues"><div id="issueList"></div></div>
+    </aside>
+  </div>
+</section>
+
+<!-- ============ PREVIEW ============ -->
+<section id="viewPreview" class="view hidden">
+  <div class="preview-actions">
+    <button class="ghost" id="previewBack">← Edit</button>
+    <span class="badge" id="previewStatus"></span>
+    <span class="spacer"></span>
+    <button id="reviewBtn">✔ Đánh dấu đã review</button>
+    <button id="exportBtn" class="primary">💾 Save DOCX</button>
+  </div>
+  <div class="preview-layout">
+    <article class="preview-doc">
+      <div class="muted small" id="previewNumber"></div>
+      <h1 id="previewTitle"></h1>
+      <div id="previewBody"></div>
+    </article>
+    <aside class="publish card">
+      <h3>Publish to Wattpad</h3>
+      <div class="small" id="wpSession"></div>
+      <div class="row">
+        <button id="wpLoginBtn" class="small">Đăng nhập Wattpad…</button>
+        <button id="wpStoriesBtn" class="small ghost">↻ Tải danh sách truyện</button>
+      </div>
+      <label>Story:
+        <select id="wpStory"><option value="">— chọn truyện —</option></select>
+      </label>
+      <div class="small muted" id="wpStoriesInfo"></div>
+      <form id="wpManualForm" class="manual-story">
+        <input id="wpManualLink" placeholder="Thêm truyện bằng link (wattpad.com/story/123…)" autocomplete="off">
+        <button type="submit" class="small">+ Thêm</button>
+      </form>
+      <label>Chapter title:
+        <input id="wpTitle">
+      </label>
+      <label>Hành động:
+        <select id="wpMode">
+          <option value="publish">Publish (công khai)</option>
+          <option value="draft">Chỉ lưu nháp trên Wattpad</option>
+        </select>
+      </label>
+      <label class="check"><input type="checkbox" id="wpConfirm"> I confirm this is the final version</label>
+      <button id="wpPublishBtn" class="primary" disabled>Publish</button>
+      <div id="wpJob" class="small"></div>
+      <h4>Lịch sử đăng</h4>
+      <div id="wpHistory" class="small muted">Chưa có.</div>
+    </aside>
+  </div>
+</section>
+
+<script type="module" src="/static/app.js"></script>
+</body>
+</html>

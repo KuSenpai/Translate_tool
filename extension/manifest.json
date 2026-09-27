@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Novel Translator – Wattpad Helper",
+  "version": "1.0.0",
+  "description": "Đăng chương từ Novel Translator (chạy trên máy bạn) lên Wattpad bằng chính trình duyệt đã đăng nhập của bạn.",
+  "permissions": ["storage"],
+  "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    { "matches": ["https://www.wattpad.com/*"], "js": ["content.js"], "run_at": "document_idle" }
+  ],
+  "action": { "default_popup": "popup.html", "default_title": "Novel Translator – Wattpad Helper" }
+}

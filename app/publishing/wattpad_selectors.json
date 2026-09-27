@@ -1,0 +1,81 @@
+{
+  "_comment": "Wattpad UI selectors. Wattpad has no public API for creating parts, so the publisher drives the website. If Wattpad changes its UI, update the candidates here (first match wins) — no code change needed. Playwright selector syntax.",
+  "ext": {
+    "_comment": "Used by the browser extension (plain CSS for querySelector; *_texts are exact button labels, case-insensitive). Served live from /api/ext/config, so editing this file needs no extension reinstall.",
+    "new_part_hrefs": ["/write/new", "/new-part", "/parts/new"],
+    "new_part_texts": ["new part", "+ new part", "phần mới", "+ phần mới", "thêm phần mới", "tạo phần mới", "viết phần mới", "thêm phần"],
+    "title_selectors": ["#story-title", "[data-testid='part-title'] textarea", "[data-testid='part-title'] input",
+                        "textarea[placeholder*='untitled' i]", "input[placeholder*='untitled' i]",
+                        "textarea[placeholder*='tiêu đề' i]", "input[placeholder*='tiêu đề' i]",
+                        "[contenteditable='true'][data-placeholder*='untitled' i]", "[contenteditable='true'][data-placeholder*='tiêu đề' i]"],
+    "body_selectors": ["#storytext", "[data-testid='editor'] [contenteditable='true']", ".editor [contenteditable='true']"],
+    "save_texts": ["save", "lưu", "lưu nháp", "save draft"],
+    "publish_texts": ["publish", "xuất bản", "đăng", "đăng tải", "đăng bài"],
+    "confirm_texts": ["publish", "xuất bản", "đăng", "đăng tải", "ok", "yes", "có", "xác nhận", "confirm"],
+    "unpublish_texts": ["unpublish", "hủy đăng", "huỷ đăng", "hủy xuất bản", "huỷ xuất bản"],
+    "dialog_selectors": ["[role='dialog']", "[role='alertdialog']", ".modal", "[class*='modal' i]"]
+  },
+  "login_path": "/login",
+  "myworks_path": "/myworks",
+  "story_path": "/myworks/{story_id}",
+  "part_edit_path": "/myworks/{story_id}/write/{part_id}",
+  "part_public_url": "/{part_id}",
+  "logged_in_cookie": "token",
+  "story_link_regex": "/myworks/(\\d+)",
+  "story_link_regexes": ["/myworks/(\\d+)"],
+  "story_title_ignore": ["edit", "sửa", "chỉnh sửa", "continue writing", "viết tiếp", "new part", "phần mới",
+                         "view as reader", "xem như độc giả", "delete", "xóa", "unpublish", "story details",
+                         "chi tiết truyện", "table of contents", "mục lục"],
+  "part_url_regex": "/write/(\\d+)",
+  "login_url_markers": ["/login", "/signup", "/register"],
+  "logged_out_paths": ["", "/home", "/start"],
+  "new_part": [
+    "a[href*='/write/new']",
+    "a:has-text('New Part')",
+    "button:has-text('New Part')",
+    "a:has-text('Phần mới')",
+    "button:has-text('Phần mới')",
+    "a:has-text('Thêm phần')"
+  ],
+  "title": [
+    "#story-title",
+    "[data-testid='part-title'] textarea",
+    "[data-testid='part-title'] input",
+    "textarea[placeholder*='Untitled' i]",
+    "input[placeholder*='Untitled' i]",
+    "textarea[placeholder*='tiêu đề' i]",
+    "input[placeholder*='tiêu đề' i]"
+  ],
+  "body": [
+    "#storytext",
+    "[data-testid='editor'] [contenteditable='true']",
+    ".editor [contenteditable='true']",
+    "[contenteditable='true']"
+  ],
+  "save": [
+    "button.on-save",
+    "button:has-text('Save')",
+    "button:has-text('Lưu')"
+  ],
+  "publish": [
+    "button.on-publish",
+    "button:has-text('Publish')",
+    "button:has-text('Đăng')"
+  ],
+  "publish_confirm": [
+    "[role='dialog'] button:has-text('Publish')",
+    ".modal button:has-text('Publish')",
+    "[role='dialog'] button:has-text('Đăng')",
+    ".modal button:has-text('Đăng')"
+  ],
+  "saved_indicator": [
+    "text=/\\b(saved|đã lưu)\\b/i"
+  ],
+  "published_indicator": [
+    "button:has-text('Unpublish')",
+    "button:has-text('Hủy đăng')"
+  ],
+  "not_found": [
+    "text=/page not found|không tìm thấy|this page doesn't exist/i"
+  ]
+}
