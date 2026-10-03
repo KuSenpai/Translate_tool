@@ -11,6 +11,8 @@
   <div class="brand">📖 Novel Translator</div>
   <div class="file-info" id="fileInfo">Chưa mở file</div>
   <div class="spacer"></div>
+  <button id="navTerms" class="small" title="Kho thuật ngữ: tên nhân vật, chiêu thức… thống nhất giữa các chương">📚 Thuật ngữ</button>
+  <button id="navTranslate" class="small" title="Dịch cả truyện tiếng Hàn bằng Claude">🤖 Dịch AI</button>
   <select id="recentProjects" title="Mở lại project gần đây"><option value="">Project gần đây…</option></select>
   <span class="ai-state" id="aiState" title="Trạng thái AI"></span>
 </header>
@@ -39,6 +41,27 @@
     </div>
     <p class="muted small">File gốc không bao giờ bị ghi đè. Mở bằng đường dẫn sẽ luôn đọc bản mới nhất của file.</p>
   </div>
+
+  <details class="card" id="dataCard">
+    <summary><b>🧹 Xử lý data thô</b> <span class="muted small">— bản dịch thô dán từ ChatGPT, raw tiếng Hàn xuất từ epub</span></summary>
+    <p class="muted small">
+      <b>Làm sạch bản dịch thô (.docx):</b> bỏ lời nhắc dịch, câu mở đầu/kết của ChatGPT, dòng “2 / 2”, quảng cáo, mã rác;
+      gom các đợt “tiếp tục dịch” của cùng một chương; chuẩn hoá heading → file sạch mở trong Thư viện để soát.<br>
+      <b>Chuẩn bị raw (.txt tiếng Hàn):</b> bỏ mục lục và heading lặp, lấy các chương <i>chưa có bản dịch</i> trong truyện
+      → sẵn sàng ở 🤖 Dịch AI. File gốc không bị sửa.</p>
+    <div class="tr-grid">
+      <label>Đường dẫn file<input id="dataPath" placeholder="D:\Truyen\2297-2586.docx  hoặc  D:\Truyen\raw.txt" autocomplete="off"></label>
+      <label>Thuộc truyện (dùng chung kho thuật ngữ)<input id="dataStory" list="storyList" placeholder="vd: Into Creation" autocomplete="off"></label>
+      <label>Raw: chỉ lấy từ chương / đến chương
+        <span class="row"><input id="dataFrom" type="number" placeholder="(tự động)" style="width:48%"><input id="dataTo" type="number" placeholder="(cuối)" style="width:48%"></span></label>
+    </div>
+    <datalist id="storyList"></datalist>
+    <div class="row">
+      <button class="primary small" id="dataClean">🧹 Làm sạch bản dịch thô (.docx)</button>
+      <button class="primary small" id="dataRaw">📄 Chuẩn bị raw tiếng Hàn (.txt)</button>
+    </div>
+    <div id="dataResult" class="small"></div>
+  </details>
 
   <div class="card hidden" id="chapterCard">
     <div class="row-between">
@@ -173,6 +196,7 @@
       </label>
       <label class="check"><input type="checkbox" id="wpConfirm"> I confirm this is the final version</label>
       <button id="wpPublishBtn" class="primary" disabled>Publish</button>
+      <div id="wpBlockers" class="small muted publish-blockers"></div>
       <div id="wpJob" class="small"></div>
       <h4>Lịch sử đăng</h4>
       <div id="wpHistory" class="small muted">Chưa có.</div>
@@ -180,6 +204,154 @@
   </div>
 </section>
 
+<!-- ============ AI TRANSLATION ============ -->
+<section id="viewTranslate" class="view hidden">
+  <div class="card">
+    <div class="row-between">
+      <h2>🤖 Dịch truyện tiếng Hàn bằng AI (Claude · Gemini)</h2>
+      <button class="ghost small" id="trBack">← Về trang chương</button>
+    </div>
+    <div id="trKeyWarn"></div>
+    <div class="row" id="trSourcesRow">
+      <label class="small">Nguồn đã chuẩn bị:
+        <select id="trSources"><option value="">— chọn —</option></select>
+      </label>
+    </div>
+    <div class="open-row">
+      <label class="dropzone" id="trDrop">
+        <input type="file" id="trFile" accept=".txt,.docx" hidden>
+        <span>Kéo thả file truyện <b>.txt</b> hoặc <b>.docx</b> (tiếng Hàn, nhiều chương) hoặc <u>chọn file</u></span>
+      </label>
+      <div class="or">hoặc</div>
+      <form id="trPathForm" class="path-form">
+        <input id="trPath" placeholder="Đường dẫn file, ví dụ D:\Truyen\raw.txt" autocomplete="off">
+        <button type="submit">Phân tích</button>
+      </form>
+    </div>
+    <p class="muted small">Kết quả giữ đúng định dạng file đầu vào: mỗi chương tiếng Hàn, ngay dưới là bản dịch tiếng Việt.
+      Chương đã có bản Việt (file song ngữ dịch dở) sẽ được bỏ qua. File gốc không bị sửa.</p>
+  </div>
+
+  <div class="card hidden" id="trSetup">
+    <h2 id="trSourceTitle"></h2>
+    <div id="trSourceInfo" class="small"></div>
+    <div id="trSourceWarn"></div>
+    <div class="tr-grid">
+      <label>Model
+        <select id="trModel"></select>
+      </label>
+      <label>Mức suy nghĩ (effort)
+        <select id="trEffort">
+          <option value="low">low — nhanh, rẻ</option>
+          <option value="medium" selected>medium — cân bằng (khuyên dùng)</option>
+          <option value="high">high — kỹ hơn, tốn hơn</option>
+        </select>
+      </label>
+      <label>Dịch song song
+        <select id="trConc"><option>1</option><option selected>2</option><option>3</option><option>4</option></select>
+      </label>
+      <label>Từ chương <input id="trFrom" type="number" placeholder="(đầu)"></label>
+      <label>Đến chương <input id="trTo" type="number" placeholder="(cuối)"></label>
+      <label>Dùng glossary của
+        <select id="trGlossary"><option value="">— không —</option></select>
+      </label>
+    </div>
+    <label class="tr-style">Hướng dẫn dịch (văn phong, xưng hô, mức độ từ ngữ 18+…)
+      <textarea id="trStyle" rows="9"></textarea>
+    </label>
+    <div class="row">
+      <button class="small ghost" id="trStyleSave">Lưu làm mặc định</button>
+      <button class="small ghost" id="trStyleReset">Khôi phục mặc định</button>
+      <span class="spacer"></span>
+      <span id="trCost" class="small"></span>
+      <button class="primary" id="trStart">▶ Bắt đầu dịch</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row-between"><h2>Các lượt dịch</h2><button class="ghost small" id="trRefresh">↻</button></div>
+    <div id="trJobs" class="small muted">Chưa có.</div>
+  </div>
+</section>
+
+<!-- ============ TERMBASE ============ -->
+<section id="viewTerms" class="view hidden">
+  <div class="card">
+    <div class="row-between">
+      <h2>📚 Kho thuật ngữ</h2>
+      <button class="ghost small" id="tbBack">← Về trang chương</button>
+    </div>
+    <label class="small">File / truyện:
+      <select id="tbProject"></select>
+    </label>
+    <div id="tbStory" class="small"></div>
+    <p class="muted small">Tên nhân vật, chiêu thức, địa danh, vật phẩm, danh hiệu… được giữ thống nhất: AI dịch chương mới,
+      gợi ý sửa và tab “Lỗi” trong editor đều dùng kho này. Khi dịch, mỗi chương chỉ gửi những thuật ngữ có mặt trong chương đó.</p>
+  </div>
+
+  <div class="tb-cols">
+    <div class="card">
+      <h3>1. Data của bạn</h3>
+      <p class="muted small">Mỗi dòng <code>tiếng Hàn = tiếng Việt</code> (hoặc <code>→</code>, Tab, <code>:</code>) thành một thuật ngữ, ví dụ
+        <code>김수현 = Kim Soo-hyun (nhân vật chính)</code>. Các dòng mô tả khác (tiểu sử, quan hệ, bối cảnh) thành <b>Ghi chú truyện</b>.
+        Nhận file .txt, .csv, .json, .docx hoặc dán trực tiếp.</p>
+      <div class="row"><input type="file" id="tbFile" accept=".txt,.csv,.tsv,.json,.docx"></div>
+      <textarea id="tbPaste" rows="6" placeholder="Hoặc dán data vào đây…"></textarea>
+      <div class="row">
+        <label class="check small"><input type="checkbox" id="tbOverwrite" checked> Data của tôi được ưu tiên (ghi đè cách dịch cũ)</label>
+        <span class="spacer"></span><button class="primary small" id="tbImport">Nhập data</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3>2. Ghi chú truyện</h3>
+      <p class="muted small">Gửi kèm khi AI dịch: nhân vật là ai, quan hệ, cách xưng hô, bối cảnh…</p>
+      <textarea id="tbNotes" rows="9"></textarea>
+      <div class="row"><span class="spacer"></span><button class="small" id="tbNotesSave">Lưu ghi chú</button></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>3. Quét chương cũ bằng AI</h3>
+    <p class="muted small">Claude đọc các chương đã dịch (bản Hàn + bản Việt), lấy ra các từ cố định và <b>cách bạn đã dịch</b>,
+      đồng thời báo những chỗ cùng một từ mà dịch nhiều kiểu. Kết quả là danh sách đề xuất để bạn duyệt.</p>
+    <div class="row">
+      <label class="small">Từ chương <input id="tbFrom" type="number" style="width:90px"></label>
+      <label class="small">Đến chương <input id="tbTo" type="number" style="width:90px"></label>
+      <label class="small">Model <select id="tbModel"></select></label>
+      <span id="tbEstimate" class="small muted"></span>
+      <span class="spacer"></span>
+      <button class="primary small" id="tbScan">🔍 Quét</button>
+      <button class="small hidden" id="tbScanStop">⏹ Dừng</button>
+    </div>
+    <div id="tbScanState" class="small"></div>
+  </div>
+
+  <div class="card" id="tbPropCard">
+    <div class="row-between"><h3>4. Đề xuất chờ duyệt <span id="tbPropCount" class="count"></span></h3>
+      <div class="row">
+        <button class="small" id="tbAcceptSel">✔ Nhận đã chọn</button>
+        <button class="small ghost" id="tbRejectSel">✖ Bỏ đã chọn</button>
+      </div>
+    </div>
+    <div id="tbProps" class="small muted">Chưa có đề xuất.</div>
+  </div>
+
+  <div class="card">
+    <div class="row-between"><h3>5. Kho thuật ngữ <span id="tbCount" class="count"></span></h3>
+      <div class="row">
+        <input id="tbFilter" placeholder="Lọc…" style="width:160px">
+        <button class="primary small" id="tbCheck">✔ Kiểm tra nhất quán</button>
+      </div>
+    </div>
+    <p class="muted small" id="tbCheckInfo">Bấm “Kiểm tra nhất quán” để xem mỗi từ xuất hiện ở bao nhiêu chương cũ và bao nhiêu % dịch đúng (miễn phí, không gọi AI).</p>
+    <div id="tbTable"></div>
+    <div id="tbCandidates"></div>
+  </div>
+</section>
+
 <script type="module" src="/static/app.js"></script>
+<script type="module" src="/static/termbase.js"></script>
+<script type="module" src="/static/data.js"></script>
+<script type="module" src="/static/translate.js"></script>
 </body>
 </html>

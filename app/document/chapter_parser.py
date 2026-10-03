@@ -33,6 +33,8 @@ _TITLE = r"(?:{sep}(.*))?".format(sep=_SEP)
 HEADING_PATTERNS: list[tuple[re.Pattern, Optional[Lang], bool]] = [
     (re.compile(rf"^제\s*(\d{{1,4}})\s*[화장회편]{_TITLE}$"), "ko", False),
     (re.compile(rf"^(\d{{1,4}})\s*화{_TITLE}$"), "ko", False),
+    # "창작물속으로 2587화(2587/2629)": novel title + chapter number (+ position in a pasted batch)
+    (re.compile(r"^\S{1,20}?\s*(\d{1,4})\s*화\s*(?:\(\s*\d+\s*/\s*\d+\s*\)?)?()$"), "ko", False),
     (re.compile(rf"^ch(?:ư|u)(?:ơ|o)ng\s*(\d{{1,4}}){_TITLE}$", re.IGNORECASE), "vi", False),
     (re.compile(rf"^t(?:ậ|a)p\s*(\d{{1,4}}){_TITLE}$", re.IGNORECASE), "vi", False),
     (re.compile(rf"^chapter\s*(\d{{1,4}}){_TITLE}$", re.IGNORECASE), None, False),
@@ -73,6 +75,8 @@ class HeadingMatch:
 def match_heading(block: Block) -> Optional[HeadingMatch]:
     raw = block.text.strip()
     if not raw or len(raw) > _MAX_HEADING_LEN or "\n" in raw:
+        return None
+    if raw[0] in "「『" and raw[-1] in "」』":   # system messages (「1. 회복 캡슐(S)」) are never headings
         return None
     text = NOISE_PREFIX.sub("", raw.strip(_DECOR)).strip(_DECOR)
     styled = block.type == "heading" or (bool(block.runs) and all(r.b for r in block.runs if r.text.strip()))
@@ -190,7 +194,16 @@ def _filter_weak(cands: list[tuple[int, HeadingMatch]]) -> tuple[list, list]:
     kept, rejected = [], []
     for k, c in enumerate(cands):
         (rejected if c[1].weak and not supported(k) else kept).append(c)
-    return kept, rejected
+    # A numbered list inside a chapter ("1. …", "2. …") can support itself; it is still far *below* the
+    # chapter numbers around it. A weak heading may go back a little (a chapter placed late), not more.
+    seq, last = [], None
+    for c in kept:
+        if c[1].weak and last is not None and c[1].number < last - 3:
+            rejected.append(c)
+            continue
+        seq.append(c)
+        last = c[1].number if last is None else max(last, c[1].number)
+    return seq, sorted(rejected)
 
 
 _BARE_NUMBER = re.compile(r"^\d{1,4}$")

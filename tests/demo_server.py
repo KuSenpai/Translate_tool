@@ -8,7 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 os.environ.update(DATA_DIR=str(ROOT / "data_demo"), OUTPUT_DIR=str(ROOT / "data_demo" / "output"),
-                  APP_PORT="8766", LLM_PROVIDER="mock", WATTPAD_HEADLESS="true", WATTPAD_PUBLISH_WAIT="5",
+                  APP_PORT="8766", LLM_PROVIDER="mock", TRANSLATE_PROVIDER="mock", WATTPAD_HEADLESS="true", WATTPAD_PUBLISH_WAIT="5",
                   WATTPAD_PROFILE_DIR=str(ROOT / "data_demo" / "wp_profile"), WATTPAD_BROWSER_CHANNEL="")
 
 from tests.fake_wattpad import FakeWattpad  # noqa: E402

@@ -55,7 +55,7 @@ File lớn có thể mất 20–40 giây ở lần đọc đầu tiên.`, "", tr
 const fail = (e) => toast(`${e.code ? `[${e.code}] ` : ""}${e.message}`, "error");
 
 function show(view) {
-  for (const v of ["Home", "Editor", "Preview"]) $(`#view${v}`).classList.toggle("hidden", v !== view);
+  for (const v of ["Home", "Editor", "Preview", "Translate", "Terms"]) $(`#view${v}`).classList.toggle("hidden", v !== view);
 }
 
 const STATUS_LABEL = { LOADED: "LOADED", EDITING: "EDITING", REVIEWED: "REVIEWED", READY_TO_PUBLISH: "READY TO PUBLISH", PUBLISHED: "PUBLISHED" };
@@ -156,7 +156,7 @@ async function loadRecent() {
       .map(([k, label]) => `<span class="stat"><span class="dot st-${k}"></span>${p.status_counts[k]} ${label}</span>`).join("");
     const missing = p.source_exists ? "" : ` · <span style="color:#c0392b">file gốc không còn ở ${esc(p.source?.path || "")}</span>`;
     return `<div class="lib-item ${S.project?.id === p.id ? "active" : ""}">
-      <div class="name">📄 ${esc(p.name)}</div>
+      <div class="name">📄 ${esc(p.name)}${p.story ? ` <span class="badge">📚 ${esc(p.story)}</span>` : ""}</div>
       <div class="actions">
         ${p.last_chapter != null ? `<button class="primary small" data-open="${esc(p.id)}" data-ch="${p.last_chapter}">Tiếp tục chương ${p.last_chapter}</button>` : ""}
         <button class="small" data-open="${esc(p.id)}">Mở</button>
@@ -436,12 +436,27 @@ function renderPreviewState() {
     : "Chưa có.";
   updatePublishButton();
 }
+// Everything that still prevents publishing, in plain words (shown under the button).
+function publishBlockers() {
+  const ch = S.chapter, out = [];
+  if (!ch) return ["Chưa mở chương."];
+  if (ch.status === "PUBLISHED") out.push("Chương này đã đăng. Muốn đăng lại thì sửa nội dung trước (phần cũ trên Wattpad sẽ được cập nhật).");
+  if (!$("#wpStory").value) out.push("Chọn truyện ở ô Story.");
+  if (!$("#wpTitle").value.trim()) out.push("Nhập tiêu đề chương.");
+  if (!$("#wpConfirm").checked) out.push("Tick “I confirm this is the final version”.");
+  if (S.job) out.push("Đang có một thao tác Wattpad chạy — đợi xong hoặc bấm Huỷ.");
+  return out;
+}
+// Ticking the confirmation on the Preview screen counts as the review: no separate click needed.
+const needsReview = () => ["LOADED", "EDITING"].includes(S.chapter?.status);
+
 function updatePublishButton() {
-  const ch = S.chapter;
-  const okStatus = ["REVIEWED", "READY_TO_PUBLISH"].includes(ch?.status);
-  $("#wpPublishBtn").disabled = !(okStatus && $("#wpConfirm").checked && $("#wpStory").value && $("#wpTitle").value.trim() && !S.job);
+  const blockers = publishBlockers();
+  $("#wpPublishBtn").disabled = blockers.length > 0;
   $("#wpPublishBtn").textContent = $("#wpMode").value === "draft" ? "Lưu nháp lên Wattpad" : "Publish";
-  $("#wpPublishBtn").title = okStatus ? "" : "Cần đánh dấu 'đã review' trước.";
+  $("#wpBlockers").innerHTML = blockers.length
+    ? `Để bật nút ${$("#wpMode").value === "draft" ? "lưu nháp" : "Publish"}:<ul>${blockers.map((b) => `<li>${esc(b)}</li>`).join("")}</ul>`
+    : needsReview() ? "Khi bấm, chương sẽ được đánh dấu đã review rồi đăng." : "";
 }
 
 async function markReviewed() {
@@ -544,9 +559,12 @@ function publish() {
   // Extension mode: the Wattpad tab opens in this same (logged-in) browser. Open it now, inside the
   // click, so the popup blocker allows it; its address is set once the task exists.
   const tab = S.wp?.mode === "extension" ? window.open("about:blank", "_blank") : null;
-  const start = api("POST", chUrl("/publish"), {
+  const review = needsReview()
+    ? api("POST", chUrl("/status"), { event: "review" }).then((ch) => { S.chapter = ch; renderPreviewState(); })
+    : Promise.resolve();
+  const start = review.then(() => api("POST", chUrl("/publish"), {
     story_id: opt.value, story_title: opt.textContent, title: $("#wpTitle").value.trim(), mode, confirm: $("#wpConfirm").checked,
-  }).then((job) => {
+  })).then((job) => {
     if (tab) { if (job.open_url) tab.location.href = job.open_url; else tab.close(); }
     return job;
   }, (e) => { if (tab) tab.close(); throw e; });

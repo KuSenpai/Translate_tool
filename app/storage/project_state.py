@@ -17,6 +17,7 @@ import os
 import re
 import tempfile
 import threading
+import time
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,10 +47,15 @@ def content_hash(obj: Any) -> str:
 
 
 def _read_json(path: Path, default: Any = None) -> Any:
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return default
+    for attempt in range(10):
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return default
+        except PermissionError:   # Windows: the file is being replaced by another thread right now
+            if attempt == 9:
+                raise
+            time.sleep(0.05)
 
 
 def _write_json(path: Path, data: Any) -> None:
@@ -57,7 +63,15 @@ def _write_json(path: Path, data: Any) -> None:
     fd, tmp = tempfile.mkstemp(suffix=".json", dir=path.parent)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, path)
+    for attempt in range(20):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:   # Windows refuses to replace a file another thread is reading
+            if attempt == 19:
+                Path(tmp).unlink(missing_ok=True)
+                raise
+            time.sleep(0.05)
 
 
 class ProjectStore:
@@ -88,8 +102,13 @@ class ProjectStore:
             for st in self.chapter_statuses(data["id"]).values():
                 if st.get("status"):
                     counts[st["status"]] = counts.get(st["status"], 0) + 1
-            src = (data.get("source") or {}).get("path")
-            data = dict(data, status_counts=counts, source_exists=bool(src) and Path(src).exists())
+            try:
+                src = self.source_path(data["id"])
+            except (KeyError, TypeError, NotFound):
+                src = None
+            if src is not None and (data.get("source") or {}).get("kind") == "upload":
+                data["source"] = dict(data["source"], path=str(src))
+            data = dict(data, status_counts=counts, source_exists=bool(src) and src.exists())
             out.append(data)
         return sorted(out, key=lambda d: d.get("last_opened_at") or d.get("updated_at", ""), reverse=True)
 
@@ -119,7 +138,12 @@ class ProjectStore:
             return data
 
     def source_path(self, pid: str) -> Path:
-        return Path(self.get_project(pid)["source"]["path"])
+        src = self.get_project(pid)["source"]
+        if src.get("kind") == "upload":
+            # the uploaded copy lives in the project folder; don't trust the stored absolute path
+            # (it breaks when the tool folder is moved or renamed)
+            return self.dir(pid) / "source.docx"
+        return Path(src["path"])
 
     # --- chapters -----------------------------------------------------------
     def _chapter_path(self, pid: str, number: int) -> Path:
@@ -141,16 +165,88 @@ class ProjectStore:
             out[int(p.stem)] = {"status": data.get("status"), "updated_at": data.get("updated_at")}
         return out
 
-    # --- glossary ----------------------------------------------------------
+    # --- stories: several files (projects) of the same novel share one termbase -------
+    @property
+    def stories_root(self) -> Path:
+        return self.root.parent / "stories"
+
+    def story_dir(self, story: str) -> Path:
+        if not re.fullmatch(r"[a-z0-9\-]{1,64}", story or ""):
+            raise NotFound("Tên truyện không hợp lệ.")
+        return self.stories_root / story
+
+    def story_of(self, pid: str) -> Optional[str]:
+        return self.get_project(pid).get("story") or None
+
+    def story_projects(self, story: str) -> list[dict]:
+        out = [d for d in (_read_json(p) for p in self.root.glob("*/project.json")) if d and d.get("story") == story]
+        return sorted(out, key=lambda d: (d.get("chapter_range") or [10 ** 9])[0])
+
+    def list_stories(self) -> list[dict]:
+        out = []
+        for f in self.stories_root.glob("*/story.json"):
+            s = _read_json(f) or {}
+            s["projects"] = [{"id": d["id"], "name": d["name"], "chapter_range": d.get("chapter_range")}
+                             for d in self.story_projects(f.parent.name)]
+            out.append(s)
+        return out
+
+    def set_story(self, pid: str, story_name: str) -> dict:
+        """Attach a project to a story; its own glossary and notes are merged into the shared ones."""
+        story = slugify(story_name)
+        with _lock:
+            d = self.story_dir(story)
+            d.mkdir(parents=True, exist_ok=True)
+            meta = _read_json(d / "story.json") or {"id": story, "name": story_name.strip(), "created_at": now_iso(),
+                                                    "notes": ""}
+            project = self.get_project(pid)
+            own = _read_json(self.dir(pid) / "glossary.json", []) or []
+            shared = _read_json(d / "glossary.json", []) or []
+            known = {g["source"] for g in shared}
+            shared += [g for g in own if g["source"] not in known]
+            _write_json(d / "glossary.json", shared)
+            if project.get("story_notes") and project["story_notes"] not in meta.get("notes", ""):
+                meta["notes"] = (meta.get("notes", "") + "\n\n" + project["story_notes"]).strip()
+            _write_json(d / "story.json", meta)
+            return self.update_project(pid, story=story)
+
+    def story_meta(self, story: str) -> dict:
+        return _read_json(self.story_dir(story) / "story.json", {}) or {}
+
+    def update_story(self, story: str, **fields) -> dict:
+        with _lock:
+            meta = self.story_meta(story)
+            meta.update(fields)
+            self.story_dir(story).mkdir(parents=True, exist_ok=True)
+            _write_json(self.story_dir(story) / "story.json", meta)
+            return meta
+
+    # --- glossary & notes (shared by the story when the project belongs to one) --------
+    def _glossary_file(self, pid: str) -> Path:
+        story = self.story_of(pid)
+        return self.story_dir(story) / "glossary.json" if story else self.dir(pid) / "glossary.json"
+
     def get_glossary(self, pid: str) -> list[dict]:
-        self.get_project(pid)
-        return _read_json(self.dir(pid) / "glossary.json", [])
+        return _read_json(self._glossary_file(pid), []) or []
 
     def save_glossary(self, pid: str, entries: list[dict]) -> list[dict]:
         with _lock:
-            self.get_project(pid)
-            _write_json(self.dir(pid) / "glossary.json", entries)
+            f = self._glossary_file(pid)
+            f.parent.mkdir(parents=True, exist_ok=True)
+            _write_json(f, entries)
             return entries
+
+    def get_notes(self, pid: str) -> str:
+        story = self.story_of(pid)
+        return self.story_meta(story).get("notes", "") if story else self.get_project(pid).get("story_notes", "")
+
+    def set_notes(self, pid: str, notes: str) -> str:
+        story = self.story_of(pid)
+        if story:
+            self.update_story(story, notes=notes)
+        else:
+            self.update_project(pid, story_notes=notes)
+        return notes
 
 
 store = ProjectStore()

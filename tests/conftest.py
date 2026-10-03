@@ -10,6 +10,7 @@ _TMP = Path(tempfile.mkdtemp(prefix="novel-test-"))
 os.environ["DATA_DIR"] = str(_TMP / "data")
 os.environ["OUTPUT_DIR"] = str(_TMP / "output")
 os.environ["LLM_PROVIDER"] = "mock"
+os.environ["TRANSLATE_PROVIDER"] = "mock"
 
 from tests.make_sample import build_book, build_duplicate_book  # noqa: E402
 
