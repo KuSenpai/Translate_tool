@@ -10,7 +10,7 @@ async function appBase() {
 async function call(path, method = "GET", body) {
   const res = await fetch((await appBase()) + path, {
     method,
-    headers: { "X-NT-Extension": "1", "Content-Type": "application/json" },
+    headers: { "X-NT-Extension": "1", "X-NT-Version": chrome.runtime.getManifest().version, "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   let data = null;
@@ -23,7 +23,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   (async () => {
     switch (msg.type) {
       case "config": return call("/api/ext/config");
-      case "task": return call("/api/ext/task");
+      case "task": return call("/api/ext/task?tab=" + encodeURIComponent(msg.tab || ""));
       case "event": return call(`/api/ext/task/${encodeURIComponent(msg.id)}/event`, "POST", msg.data);
       case "stories": return call("/api/ext/stories", "POST", msg.data);
       case "diag": return call("/api/ext/diag", "POST", msg.data);

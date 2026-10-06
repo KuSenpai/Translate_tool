@@ -139,6 +139,11 @@ MODELS = {
     "antigravity:flash": {"label": "Antigravity · Gemini Flash — nhanh, tốn ít hạn mức hơn Pro",
                           "price": (0.0, 0.0, 0.0), "effort": True, "fallbacks": False, "subscription": True,
                           "provider": "antigravity", "tier": "flash"},
+    # Grok (xAI API, per-token billing). Slugs come from XAI_MODEL / XAI_MODEL_FAST (app/ai/grok.py). Grok accepts 18+ fiction.
+    "grok:best": {"label": "Grok (xAI) · mạnh nhất — dịch được truyện 18+, tính tiền API xAI", "price": (2.0, 6.0, 0.50),
+                  "effort": False, "fallbacks": False, "provider": "xai", "tier": "best"},
+    "grok:fast": {"label": "Grok (xAI) · rẻ — dịch được truyện 18+, rẻ hơn ~2 lần", "price": (1.25, 2.5, 0.20),
+                  "effort": False, "fallbacks": False, "provider": "xai", "tier": "fast"},
 }
 DEFAULT_MODEL = "claude-opus-5-5"
 
@@ -318,6 +323,9 @@ def make_translator(model: str, effort: str):
     if MODELS.get(model, {}).get("provider") == "antigravity":
         from .antigravity import AntigravityTranslator
         return AntigravityTranslator(model, effort)
+    if MODELS.get(model, {}).get("provider") == "xai":
+        from .grok import GrokTranslator
+        return GrokTranslator(model, effort)
     if MODELS.get(model, {}).get("subscription"):
         from .claude_code import ClaudeCodeJSON
 

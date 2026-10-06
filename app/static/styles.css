@@ -192,3 +192,19 @@ body.busy .view { pointer-events: none; opacity: .6; }
 /* data processing card */
 #dataCard summary { cursor: pointer; font-size: 15px; }
 #dataCard[open] summary { margin-bottom: 8px; }
+
+/* batch publishing (home screen) */
+#batchCard summary { cursor: pointer; }
+.bp-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 12px 0; }
+.bp-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+#batchCard label.check { display: flex; align-items: center; gap: 8px; font-weight: 600; margin: 10px 0 8px; }
+#bpProgress { margin-top: 12px; }
+.bp-head { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; }
+.bp-head button { align-self: flex-start; margin-top: 4px; }
+.bp-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.bp-table td { border-top: 1px solid var(--border); padding: 4px 8px; vertical-align: top; }
+.bp-table td:first-child { width: 24px; }
+.bp-done { color: var(--ok); } .bp-failed { color: #c0392b; font-weight: 600; }
+.bp-skipped, .bp-cancelled, .bp-queued { color: var(--muted); }
+.bp-running { font-weight: 600; }
+@media (max-width: 800px) { .bp-grid { grid-template-columns: 1fr; } }

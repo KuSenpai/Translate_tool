@@ -26,6 +26,7 @@ from .wattpad_publisher import SELECTORS, blocks_to_html, blocks_to_text
 
 log = get_logger("WATTPAD")
 TASK_TIMEOUT = 15 * 60
+CLAIM_TTL = 90  # seconds a browser tab keeps its claim on the task without polling / reporting
 
 
 class ExtensionAuthError(AppError):
@@ -39,6 +40,7 @@ class ExtensionBridge:
         self.task: Optional[dict] = None
         self.last_seen: Optional[float] = None
         self.last_seen_iso: Optional[str] = None
+        self.version: Optional[str] = None  # version of the extension that talked to us last
 
     # ------------------------------------------------------------------ app side
     def touch(self) -> None:
@@ -48,7 +50,8 @@ class ExtensionBridge:
         return bool(self.last_seen and time.time() - self.last_seen < 120)
 
     def create_publish_task(self, *, story_id: str, story_title: str, title: str, blocks: list[dict], mode: str,
-                            part_id: Optional[str], on_done: Callable[[dict, dict], None]) -> dict:
+                            part_id: Optional[str], on_done: Callable[[dict, dict], None],
+                            countdown: int = 5, batch: Optional[dict] = None) -> dict:
         hint = ("" if self.connected() else
                 " Chưa thấy extension kết nối — hãy chắc chắn đã cài “Novel Translator – Wattpad Helper” vào Edge.")
         job = self.jobs.start_external(
@@ -58,11 +61,13 @@ class ExtensionBridge:
                             "VPN có bật không, đã đăng nhập Wattpad trong Edge chưa.",
             on_done=on_done)
         base = config.WATTPAD_BASE_URL.rstrip("/")
+        # Retry -> the part created before; otherwise the story page (the extension opens its latest part from there).
         open_url = base + (SELECTORS["part_edit_path"].format(story_id=story_id, part_id=part_id) if part_id
                            else SELECTORS["story_path"].format(story_id=story_id))
         self.task = {"id": job["id"], "story_id": story_id, "story_title": story_title, "title": title,
                      "html": blocks_to_html(blocks), "text": blocks_to_text(blocks), "mode": mode,
-                     "part_id": part_id, "stage": "pending", "open_url": open_url, "created_at": now_iso()}
+                     "part_id": part_id, "from_part": None, "stage": "pending", "open_url": open_url,
+                     "countdown": countdown, "batch": batch, "created_at": now_iso()}
         log.info("Extension task %s created: story=%s mode=%s reuse_part=%s", job["id"], story_id, mode, bool(part_id))
         return {**job, "open_url": open_url}
 
@@ -79,7 +84,9 @@ class ExtensionBridge:
                 "part_public_url": SELECTORS["part_public_url"], "story_link_regex": SELECTORS["story_link_regex"],
                 "part_url_regex": SELECTORS["part_url_regex"], "story_title_ignore": SELECTORS["story_title_ignore"]}
 
-    def current_task(self) -> Optional[dict]:
+    def current_task(self, tab: str = "") -> Optional[dict]:
+        """The task for the polling tab. With several Wattpad tabs open only the first one to poll gets it
+        (its claim is kept alive by polling / progress events), so two tabs never drive the same task."""
         self.touch()
         if not self.task:
             return None
@@ -87,15 +94,26 @@ class ExtensionBridge:
         if job is None or self.jobs.get(self.task["id"])["state"] != "running":
             self.task = None
             return None
-        return self.task
+        if tab:
+            owner, seen = self.task.get("_claim", (tab, 0.0))
+            if owner != tab and time.time() - seen < CLAIM_TTL:
+                return None
+            self.task["_claim"] = (tab, time.time())
+        return {k: v for k, v in self.task.items() if not k.startswith("_")}
 
     def event(self, task_id: str, data: dict) -> dict:
         self.touch()
         if not self.task or self.task["id"] != task_id:
             raise NotFound("Task không còn hiệu lực (đã xong, bị huỷ hoặc hết hạn).")
+        if data.get("tab") and self.task.get("_claim", (data["tab"], 0.0))[0] == data["tab"]:
+            self.task["_claim"] = (data["tab"], time.time())
         for key in ("stage", "part_id"):
             if data.get(key):
                 self.task[key] = str(data[key])
+        if "from_part" in data:  # editor page the "New Part" click started from ("" = not from an editor)
+            self.task["from_part"] = str(data["from_part"]) or None
+        if data.get("part_gone"):  # the part created in an earlier attempt no longer exists on Wattpad
+            self.task.update(part_id=None, stage="pending", from_part=None)
         if data.get("message"):
             self.jobs.progress(task_id, str(data["message"])[:300])
         if data.get("final"):

@@ -5,24 +5,35 @@ Status rules:
 - Only a verified successful publish moves the chapter to PUBLISHED (after saving the local DOCX).
 - A failure keeps READY_TO_PUBLISH and records the error; if a part was already created, its id is
   kept so a retry updates that part instead of creating a duplicate.
+
+Batch (several chapters in one go): chapters are published strictly one after another, in ascending order,
+each through the same single-chapter path. The first failure or a cancel stops the batch - the remaining
+chapters stay untouched, so fixing the problem and running the batch again continues where it stopped.
 """
 from __future__ import annotations
 
 import importlib.util
 import json
 import re
+import threading
+import uuid
+from typing import Callable, Optional
 
 from .. import config
 from ..editor.chapter_editor import ChapterService, service as chapter_service
 from ..editor.chapter_state import Status, transition
-from ..errors import StateError
+from ..errors import AppError, StateError
 from ..logging_setup import get_logger
 from ..storage.project_state import _read_json, _write_json, now_iso
 from .extension_bridge import ExtensionBridge
-from .jobs import JobManager, jobs as default_jobs
+from .jobs import JobBusy, JobManager, jobs as default_jobs
 
 log = get_logger("WATTPAD")
 STATE_FILE = config.DATA_DIR / "wattpad_state.json"
+EXTENSION_VERSION = json.loads((config.BASE_DIR / "extension" / "manifest.json").read_text(encoding="utf-8"))["version"]
+BATCH_MAX = 100
+BATCH_DELAY = 8        # seconds between two chapters of a batch (don't hammer Wattpad)
+BATCH_COUNTDOWN = 3    # seconds the extension waits (with a Cancel button) before each Publish click
 
 
 def _state() -> dict:
@@ -42,6 +53,8 @@ def status() -> dict:
         "base": config.WATTPAD_BASE_URL.rstrip("/"),
         "extension_connected": publisher.bridge.connected(),
         "extension_last_seen": publisher.bridge.last_seen_iso,
+        "extension_version": publisher.bridge.version,       # None until the extension has called; "1.0.0" = too old to say
+        "extension_expected": EXTENSION_VERSION,
         "available": available,
         "error": None if available else "Chưa cài playwright (pip install playwright).",
         "logged_in_hint": bool(st.get("logged_in_at")) and not st.get("session_expired"),
@@ -68,7 +81,8 @@ def save_stories_from_extension(stories: list[dict], page_url: str) -> dict:
 
 
 def add_manual_story(link: str, title: str = "") -> dict:
-    """Add a story from a pasted Wattpad link (…/story/123456789-ten, …/myworks/123456789) or a bare id."""
+    """Add a story from a pasted Wattpad link (…/story/123456789-ten, …/myworks/123456789 or the editor link
+    …/myworks/123456789/write/987654321) or a bare id."""
     link = link.strip()
     m = STORY_ID_RE.search(link)
     if not m:
@@ -89,6 +103,8 @@ class PublishService:
         self.chapters = chapters
         self.jobs = job_manager
         self.bridge = ExtensionBridge(job_manager)
+        self.batch: Optional[dict] = None
+        self._batch_lock = threading.RLock()
 
     def login(self) -> dict:
         def done(job, result):
@@ -116,7 +132,12 @@ class PublishService:
         return self.jobs.start("stories", {"action": "stories"}, timeout=120, on_done=done)
 
     def publish(self, pid: str, number: int, *, story_id: str, story_title: str, title: str,
-                mode: str, confirm: bool) -> dict:
+                mode: str, confirm: bool, countdown: int = 5, batch: Optional[dict] = None,
+                after: Optional[Callable[[dict], None]] = None) -> dict:
+        """Publish one chapter. `batch`/`after` are used by publish_batch: batch info shown by the
+        extension, and a callback that receives the final result (also on failure)."""
+        if batch is None and self.batch_running():
+            raise JobBusy("Đang có một đợt đăng nhiều chương chạy. Hãy đợi nó xong hoặc bấm Huỷ đợt đăng.")
         store = self.chapters.store
         rec = self.chapters._require(pid, number)
         if not confirm:
@@ -168,13 +189,191 @@ class PublishService:
             store.save_chapter(pid, number, r)
             log.info("Publish %s: chapter=%d %s", "successful" if entry["ok"] else "failed", number,
                      entry.get("error_code") or "")
+            if after:
+                after(result)
 
         if config.WATTPAD_MODE == "extension":
             return self.bridge.create_publish_task(story_id=story_id, story_title=story_title, title=title.strip(),
-                                                   blocks=rec["draft"], mode=mode, part_id=part_id, on_done=done)
+                                                   blocks=rec["draft"], mode=mode, part_id=part_id, on_done=done,
+                                                   countdown=countdown, batch=batch)
         return self.jobs.start("publish", {"action": "publish", "story_id": story_id, "title": title.strip(),
                                            "blocks": rec["draft"], "mode": mode, "part_id": part_id},
                                timeout=240, on_done=done)
+
+    # ------------------------------------------------------------------ batch
+    def batch_running(self) -> bool:
+        return bool(self.batch and self.batch["state"] == "running")
+
+    def publish_batch(self, pid: str, numbers: list[int], *, story_id: str, story_title: str, mode: str,
+                      confirm: bool, delay: Optional[int] = None) -> dict:
+        """Publish (or save as drafts) several chapters one after another. Everything is validated up front,
+        so nothing starts when any chapter is unusable."""
+        if not confirm:
+            raise StateError("Cần tick “Tôi xác nhận các chương này là bản cuối cùng” trước khi đăng.", code="CONFIRM_REQUIRED")
+        if not story_id:
+            raise StateError("Chưa chọn truyện trên Wattpad.", code="NO_STORY")
+        nums = sorted(set(numbers))
+        if not nums:
+            raise StateError("Chưa chọn chương nào.", code="NO_CHAPTERS")
+        if len(nums) > BATCH_MAX:
+            raise StateError(f"Mỗi đợt tối đa {BATCH_MAX} chương.", code="TOO_MANY_CHAPTERS")
+        with self._batch_lock:
+            if self.batch_running():
+                raise JobBusy("Đang có một đợt đăng nhiều chương chạy. Hãy đợi nó xong hoặc bấm Huỷ đợt đăng.")
+            if self.jobs.busy():
+                raise JobBusy("Đang có một thao tác Wattpad khác chạy. Hãy đợi nó xong hoặc bấm Huỷ.")
+
+            items, skipped, problems = [], [], []
+            for n in nums:
+                rec = self.chapters.store.get_chapter(pid, n)
+                try:
+                    if rec is None:  # not opened in the editor yet: load it from the Word file (nothing is changed)
+                        self.chapters.load(pid, n)
+                        rec = self.chapters.store.get_chapter(pid, n)
+                except AppError as e:
+                    problems.append(f"Chương {n}: {e.message}")
+                    continue
+                if rec["status"] == Status.PUBLISHED.value:
+                    skipped.append({"number": n, "reason": "đã đăng trước đó"})
+                    continue
+                if not any(b.get("runs") for b in rec["draft"]):
+                    problems.append(f"Chương {n}: bản dịch trống.")
+                    continue
+                if rec.get("confidence") == "low" and rec["status"] == Status.LOADED.value:
+                    problems.append(f"Chương {n}: parser không chắc ranh giới chương — hãy mở chương này trong editor để kiểm tra trước.")
+                    continue
+                title = (rec.get("title") or "").strip()[:200]
+                if not title:
+                    problems.append(f"Chương {n}: tiêu đề trống.")
+                    continue
+                items.append({"number": n, "title": title, "state": "queued", "message": "", "part_url": None,
+                              "error_code": None, "job_id": None})
+            if problems:
+                raise StateError("Không thể bắt đầu — có chương chưa đủ điều kiện:\n" + "\n".join(problems),
+                                 code="BATCH_INVALID", details={"problems": problems})
+            if not items:
+                raise StateError("Không còn chương nào cần đăng (tất cả đã ở trạng thái PUBLISHED).", code="NOTHING_TO_PUBLISH")
+
+            batch = {"id": uuid.uuid4().hex[:12], "pid": pid, "story_id": story_id, "story_title": story_title,
+                     "mode": mode, "delay": BATCH_DELAY if delay is None else max(0, int(delay)), "state": "running",
+                     "items": items, "skipped": skipped, "current": None, "open_url": None,
+                     "message": f"Đang bắt đầu đợt {len(items)} chương…", "started_at": now_iso(),
+                     "finished_at": None}
+            previous, self.batch = self.batch, batch
+            log.info("Batch %s started: project=%s story=%s mode=%s chapters=%s", batch["id"], pid, story_id, mode,
+                     [i["number"] for i in items])
+            try:
+                self._start_item(batch, items[0])
+            except Exception:
+                self.batch = previous  # nothing was started: drop it so the user can simply try again
+                raise
+            return self._public_batch(batch)
+
+    def _start_item(self, batch: dict, item: dict) -> None:
+        """Start the extension task for one chapter. Raises if it cannot be started."""
+        pid, number = batch["pid"], item["number"]
+        rec = self.chapters.store.get_chapter(pid, number)
+        if rec and rec["status"] in (Status.LOADED.value, Status.EDITING.value):
+            self.chapters.set_status(pid, number, "review")  # confirming the batch counts as the review
+        total = len(batch["items"])
+        index = batch["items"].index(item) + 1
+        job = self.publish(pid, number, story_id=batch["story_id"], story_title=batch["story_title"],
+                           title=item["title"], mode=batch["mode"], confirm=True, countdown=BATCH_COUNTDOWN,
+                           batch={"id": batch["id"], "index": index, "total": total},
+                           after=lambda result: self._item_done(batch, item, result))
+        item["state"], item["job_id"], batch["current"] = "running", job["id"], number
+        batch["message"] = f"Đang đăng chương {number} ({index}/{total})…"
+        if not batch["open_url"]:
+            batch["open_url"] = job.get("open_url")
+
+    def _item_done(self, batch: dict, item: dict, result: dict) -> None:
+        with self._batch_lock:
+            ok = bool(result.get("ok"))
+            cancelled = result.get("error_code") == "CANCELLED"
+            item.update(state="done" if ok else ("cancelled" if cancelled else "failed"),
+                        message=result.get("message") or "", part_url=result.get("part_url"),
+                        error_code=None if ok else result.get("error_code"))
+            batch["current"] = None
+            if batch["state"] != "running":  # cancelled from the app; the rest is already marked
+                return
+            queued = [i for i in batch["items"] if i["state"] == "queued"]
+            if not ok:
+                for i in queued:
+                    i.update(state="skipped", message="Bỏ qua vì chương trước chưa đăng được.")
+                self._finish_batch(batch, "cancelled" if cancelled else "error",
+                                   f"Đã huỷ ở chương {item['number']}." if cancelled
+                                   else f"Dừng ở chương {item['number']}: {item['message']}")
+            elif not queued:
+                self._finish_batch(batch, "done", None)
+            else:
+                batch["message"] = f"Đã xong chương {item['number']}. Chờ {batch['delay']} giây rồi sang chương kế…"
+                self._later(max(1, batch["delay"]), batch)
+
+    def _later(self, seconds: float, batch: dict, attempt: int = 0) -> None:
+        timer = threading.Timer(seconds, self._advance, args=(batch, attempt))
+        timer.daemon = True
+        timer.start()
+
+    def _advance(self, batch: dict, attempt: int = 0) -> None:
+        with self._batch_lock:
+            if batch["state"] != "running":
+                return
+            item = next((i for i in batch["items"] if i["state"] == "queued"), None)
+            if item is None:
+                return self._finish_batch(batch, "done", None)
+            try:
+                self._start_item(batch, item)
+            except JobBusy:
+                if attempt < 20:  # the previous job is still closing: try again shortly
+                    return self._later(1.5, batch, attempt + 1)
+                self._item_done(batch, item, {"ok": False, "error_code": "JOB_BUSY",
+                                              "message": "Wattpad đang bận với một thao tác khác."})
+            except AppError as e:
+                self._item_done(batch, item, {"ok": False, "error_code": e.code, "message": e.message})
+            except Exception as e:  # never let a timer thread die silently with the batch stuck on "running"
+                log.exception("Batch %s: cannot start chapter %s", batch["id"], item["number"])
+                self._item_done(batch, item, {"ok": False, "error_code": "INTERNAL", "message": str(e)})
+
+    def _finish_batch(self, batch: dict, state: str, message: Optional[str]) -> None:
+        done = [i for i in batch["items"] if i["state"] == "done"]
+        verb = "đăng" if batch["mode"] == "publish" else "lưu nháp"
+        batch.update(state=state, current=None, finished_at=now_iso(),
+                     message=message or f"Đã {verb} {len(done)}/{len(batch['items'])} chương.")
+        log.info("Batch %s finished: %s (%d/%d) %s", batch["id"], state, len(done), len(batch["items"]), message or "")
+
+    def cancel_batch(self, batch_id: str) -> Optional[dict]:
+        with self._batch_lock:
+            batch = self.batch
+            if not batch or batch["id"] != batch_id:
+                raise StateError("Không tìm thấy đợt đăng này.", code="BATCH_NOT_FOUND")
+            if batch["state"] != "running":
+                return self._public_batch(batch)
+            running = next((i for i in batch["items"] if i["state"] == "running"), None)
+            for i in batch["items"]:
+                if i["state"] == "queued":
+                    i.update(state="cancelled", message="Đã huỷ.")
+            self._finish_batch(batch, "cancelled", "Đã huỷ đợt đăng. Các chương chưa chạy giữ nguyên.")
+            if running and running.get("job_id"):
+                self.bridge.cancel(running["job_id"])  # -> _item_done marks the running chapter cancelled
+            return self._public_batch(batch)
+
+    def batch_status(self) -> Optional[dict]:
+        batch = self.batch
+        if not batch:
+            return None
+        running = next((i for i in batch["items"] if i["state"] == "running"), None)
+        if running and running.get("job_id"):
+            try:
+                self.jobs.get(running["job_id"])  # a stalled extension task times out lazily, on read
+            except AppError:
+                pass
+        with self._batch_lock:
+            return self._public_batch(batch)
+
+    @staticmethod
+    def _public_batch(batch: dict) -> dict:
+        return {**{k: v for k, v in batch.items() if k != "items"},
+                "items": [{k: v for k, v in i.items() if k != "job_id"} for i in batch["items"]]}
 
 
 publisher = PublishService()

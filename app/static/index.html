@@ -84,6 +84,33 @@
     </div>
     <div id="chapterList" class="chapter-list"></div>
   </div>
+
+  <details class="card hidden" id="batchCard">
+    <summary><b>📤 Đăng nhiều chương lên Wattpad</b>
+      <span class="muted small">— chọn khoảng chương, tool đăng lần lượt từng chương</span></summary>
+    <p class="muted small">Chương chưa mở trong editor sẽ được tự đọc từ file Word. Tiêu đề lấy theo tiêu đề chương
+      (sửa ở editor nếu cần). Chương đã đăng được bỏ qua; gặp lỗi ở chương nào tool dừng ngay ở đó.</p>
+    <div class="bp-grid">
+      <label>Truyện trên Wattpad
+        <select id="bpStory"><option value="">— chọn truyện —</option></select></label>
+      <label>Chương cần đăng
+        <input id="bpRange" placeholder="vd: 12-20, 25" autocomplete="off"></label>
+      <label>Hành động
+        <select id="bpMode">
+          <option value="publish">Publish (công khai)</option>
+          <option value="draft">Chỉ lưu nháp trên Wattpad</option>
+        </select></label>
+    </div>
+    <div class="row small">
+      <button class="small ghost" id="bpUnpublished" type="button">Chọn các chương chưa đăng</button>
+      <span class="muted" id="bpCount"></span>
+    </div>
+    <div id="bpExt" class="small"></div>
+    <label class="check"><input type="checkbox" id="bpConfirm"> Tôi xác nhận các chương này là bản cuối cùng</label>
+    <div class="row"><button id="bpStart" class="primary" disabled>Đăng</button></div>
+    <div id="bpBlockers" class="small muted publish-blockers"></div>
+    <div id="bpProgress"></div>
+  </details>
 </section>
 
 <!-- ============ EDITOR ============ -->
@@ -182,7 +209,7 @@
       </label>
       <div class="small muted" id="wpStoriesInfo"></div>
       <form id="wpManualForm" class="manual-story">
-        <input id="wpManualLink" placeholder="Thêm truyện bằng link (wattpad.com/story/123…)" autocomplete="off">
+        <input id="wpManualLink" placeholder="Thêm truyện bằng link (…/story/123… hoặc link soạn thảo …/myworks/123…/write/456…)" autocomplete="off">
         <button type="submit" class="small">+ Thêm</button>
       </form>
       <label>Chapter title:
@@ -352,6 +379,7 @@
 <script type="module" src="/static/app.js"></script>
 <script type="module" src="/static/termbase.js"></script>
 <script type="module" src="/static/data.js"></script>
+<script type="module" src="/static/batch.js"></script>
 <script type="module" src="/static/translate.js"></script>
 </body>
 </html>

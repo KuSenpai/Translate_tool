@@ -198,6 +198,30 @@ def publish_chapter(pid: str, number: int, req: PublishReq):
                                              title=req.title, mode=req.mode, confirm=req.confirm)
 
 
+class BatchPublishReq(BaseModel):
+    story_id: str = Field(min_length=1, max_length=40, pattern=r"^\d+$")
+    story_title: str = ""
+    chapters: list[int] = Field(min_length=1, max_length=publish_service.BATCH_MAX)
+    mode: str = Field("publish", pattern="^(publish|draft)$")
+    confirm: bool = False
+
+
+@router.post("/projects/{pid}/publish-batch")
+def publish_batch(pid: str, req: BatchPublishReq):
+    return publish_service.publisher.publish_batch(pid, req.chapters, story_id=req.story_id,
+                                                   story_title=req.story_title, mode=req.mode, confirm=req.confirm)
+
+
+@router.get("/wattpad/batch")
+def wattpad_batch():
+    return {"batch": publish_service.publisher.batch_status()}
+
+
+@router.post("/wattpad/batch/{batch_id}/cancel")
+def wattpad_batch_cancel(batch_id: str):
+    return {"batch": publish_service.publisher.cancel_batch(batch_id)}
+
+
 @router.get("/jobs/{job_id}")
 def job_status(job_id: str):
     return jobs.get(job_id)
@@ -215,6 +239,8 @@ def require_extension(request: Request) -> None:
     if request.headers.get("x-nt-extension") != "1" or origin.startswith(("http://", "https://")):
         from .publishing.extension_bridge import ExtensionAuthError
         raise ExtensionAuthError("Chỉ extension Novel Translator mới được gọi API này.")
+    # 1.0.0 extensions did not send a version
+    publish_service.publisher.bridge.version = request.headers.get("x-nt-version", "1.0.0")[:20]
 
 
 ext = APIRouter(prefix="/api/ext", dependencies=[Depends(require_extension)])
@@ -223,6 +249,9 @@ ext = APIRouter(prefix="/api/ext", dependencies=[Depends(require_extension)])
 class ExtEvent(BaseModel):
     stage: Optional[str] = Field(None, max_length=40)
     part_id: Optional[str] = Field(None, pattern=r"^\d{1,15}$")
+    from_part: Optional[str] = Field(None, pattern=r"^\d{0,15}$")
+    part_gone: bool = False
+    tab: Optional[str] = Field(None, max_length=40)
     message: Optional[str] = Field(None, max_length=1000)
     final: bool = False
     ok: bool = False
@@ -242,8 +271,8 @@ def ext_config():
 
 
 @ext.get("/task")
-def ext_task():
-    return {"task": publish_service.publisher.bridge.current_task()}
+def ext_task(tab: str = ""):
+    return {"task": publish_service.publisher.bridge.current_task(tab[:40])}
 
 
 @ext.post("/task/{task_id}/event")
@@ -298,11 +327,12 @@ class TranslateJobReq(BaseModel):
 def translate_info():
     from .ai import novel_translator as nt
     import os
-    from .ai import antigravity, claude_code
+    from .ai import antigravity, claude_code, grok
     return {"models": [{"id": k, "label": v["label"], "price": v["price"], "subscription": bool(v.get("subscription")),
                         "provider": v.get("provider", "api")} for k, v in nt.MODELS.items()],
             "claude_code": claude_code.status(),
             "antigravity": antigravity.status(),
+            "grok": grok.status(),
             "default_model": nt.DEFAULT_MODEL, "style": tj().get_style(), "default_style": nt.DEFAULT_STYLE,
             "provider": os.getenv("TRANSLATE_PROVIDER", "anthropic"),
             "has_key": bool(os.getenv("ANTHROPIC_API_KEY", "").strip())}
@@ -315,6 +345,13 @@ def translate_antigravity(refresh: bool = False):
     st = dict(antigravity.status(probe=True, force=refresh))
     st["picked"] = {t: antigravity.pick_model(t, st["models"], "high") for t in ("pro", "flash")}
     return st
+
+
+@router.get("/translate/grok")
+def translate_grok(refresh: bool = False):
+    """Lists the Grok models the XAI_API_KEY can use (GET /v1/models) and the slugs the tool will pick."""
+    from .ai import grok
+    return grok.status(probe=True, force=refresh)
 
 
 def tj():

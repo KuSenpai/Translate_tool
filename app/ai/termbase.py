@@ -255,6 +255,9 @@ def _make_client(model: str):
     if MODELS.get(model, {}).get("provider") == "antigravity":
         from .antigravity import AntigravityJSON
         return AntigravityJSON(model, effort="low")
+    if MODELS.get(model, {}).get("provider") == "xai":
+        from .grok import GrokJSON
+        return GrokJSON(model, effort="low")
     if MODELS.get(model, {}).get("subscription"):
         from .claude_code import ClaudeCodeJSON
         return ClaudeCodeJSON(model, effort="low")

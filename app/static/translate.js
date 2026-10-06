@@ -105,12 +105,33 @@ async function checkAntigravity(refresh = false) {
   renderAuth();
 }
 
+// Grok (xAI): XAI_API_KEY set? do the configured model slugs exist for this key?
+function grokNote(g, tier) {
+  if (!g.has_key) {
+    return `<div class="alert error">Cần <b>XAI_API_KEY</b> trong <code>.env</code> (lấy ở console.x.ai, nạp credit) rồi khởi động lại tool.</div>`;
+  }
+  const slug = g.picked?.[tier];
+  const warn = g.error ? `<div class="alert error">${esc(g.error)}${g.models?.length ? ` Model có sẵn: <code>${esc(g.models.join(", "))}</code>` : ""}
+      <button class="btn small" id="trGkRecheck">Kiểm tra lại</button></div>` : "";
+  return `<div class="alert">✔ Dịch bằng <b>Grok (xAI)</b>${slug ? ` (<code>${esc(slug)}</code>)` : ""} — tính tiền theo token trên tài khoản xAI.
+    Grok dịch được cảnh 18+; đổi model bằng <code>XAI_MODEL</code> / <code>XAI_MODEL_FAST</code> trong <code>.env</code>.</div>${warn}`;
+}
+
+async function checkGrok(refresh = false) {
+  try { T.info.grok = { ...(T.info.grok || {}), ...await api("GET", `/api/translate/grok${refresh ? "?refresh=1" : ""}`) }; }
+  catch (e) { T.info.grok = { ...(T.info.grok || {}), checked: true, error: e.message }; }
+  renderAuth();
+}
+
 // Which way of calling the AI is ready: API key (billed per token), Claude Code or Antigravity (subscription / quota).
 function renderAuth() {
   const i = T.info, cc = i.claude_code || {};
   const m = curModel(), sub = m.subscription;
   if (i.provider === "mock") {
     $("#trKeyWarn").innerHTML = `<div class="alert">Đang ở chế độ thử (TRANSLATE_PROVIDER=mock): không gọi Claude, bản dịch là văn bản giả.</div>`;
+  } else if (m.provider === "xai") {
+    $("#trKeyWarn").innerHTML = grokNote(i.grok || {}, m.id.split(":")[1]);
+    $("#trGkRecheck")?.addEventListener("click", () => checkGrok(true));
   } else if (m.provider === "antigravity") {
     $("#trKeyWarn").innerHTML = antigravityNote(i.antigravity || {}, m.id.split(":")[1]);
     $("#trAgRecheck")?.addEventListener("click", () => checkAntigravity(true));
@@ -123,7 +144,7 @@ function renderAuth() {
           ${cc.installed ? "(đăng nhập bằng tài khoản Claude có gói Pro/Max)" : "rồi <code>claude auth login --claudeai</code>"}, sau đó bấm lại model này.</div>`;
   } else {
     $("#trKeyWarn").innerHTML = i.has_key ? "" : `<div class="alert error">Model này tính tiền API: cần <b>ANTHROPIC_API_KEY</b> trong <code>.env</code>
-      (console.anthropic.com). Hoặc chọn <b>Claude Code · …</b> (gói Claude) hay <b>Antigravity · …</b> (Gemini).</div>`;
+      (console.anthropic.com). Hoặc chọn <b>Claude Code · …</b> (gói Claude) <b>Antigravity · …</b> (Gemini) hay <b>Grok</b> (XAI_API_KEY).</div>`;
   }
 }
 
@@ -149,7 +170,7 @@ function updateCost() {
   const tin = chars * 1.0 + chs.length * 2500, tout = chars * 1.6 + chs.length * 600;
   const cost = (tin * pin + tout * pout) / 1e6;
   $("#trCost").innerHTML = `${chs.length} chương · ước tính <b>~${usd(cost)}</b> <span class="muted">(±50%, chi phí thật hiện trong lúc dịch)</span>`;
-  $("#trStart").disabled = !chs.length;
+  $("#trStart").disabled = !chs.length || (m.provider === "xai" && T.info.grok?.has_key === false);
 }
 
 async function analyzeFile(file) {
@@ -166,6 +187,7 @@ async function start() {
   const m = curModel();
   if (!confirm(`Dịch ${chs.length} chương bằng ${model}?\n${$("#trCost").innerText}\n\n${m.provider === "antigravity"
     ? "Sẽ dùng hạn mức Gemini của tài khoản Google trong Antigravity — không tính tiền API."
+    : m.provider === "xai" ? "Chi phí API sẽ tính vào tài khoản xAI (Grok) của bạn."
     : m.subscription ? "Sẽ dùng lượt của gói Claude (Claude Code) — không tính tiền API."
     : "Chi phí API sẽ tính vào tài khoản Anthropic của bạn."}`)) return;
   try {
@@ -270,8 +292,10 @@ $("#trModel").addEventListener("change", async () => {   // re-check the CLI log
   const m = curModel();
   if (m.provider === "antigravity") {
     if (!T.info.antigravity?.checked) await checkAntigravity();
+  } else if (m.provider === "xai") {
+    await checkGrok();
   } else if (m.subscription) {
-    try { T.info = { ...await api("GET", "/api/translate/info"), antigravity: T.info.antigravity }; } catch { /* keep old */ }
+    try { T.info = { ...await api("GET", "/api/translate/info"), grok: T.info.grok, antigravity: T.info.antigravity }; } catch { /* keep old */ }
   }
   renderAuth(); updateCost();
 });

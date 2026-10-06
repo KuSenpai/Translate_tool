@@ -172,6 +172,8 @@ async function loadRecent() {
 
 function setIndex(idx) {
   S.index = idx; S.project = idx.project;
+  window.__ntIndex = idx;  // read by batch.js (the "đăng nhiều chương" card), which also listens to this event
+  document.dispatchEvent(new CustomEvent("nt:index", { detail: idx }));
   store.set("lastProject", S.project.id);
   $("#fileInfo").textContent = `File: ${S.project.name}` + (S.project.source?.kind === "path" ? ` (${S.project.source.path})` : "");
   $("#chapterCard").classList.remove("hidden");
@@ -470,6 +472,11 @@ async function exportDocx() {
   } catch (e) { fail(e); }
 }
 
+const staleExtension = (st) => st.extension_connected && st.extension_version !== st.extension_expected
+  ? `<div class="alert error">⚠ Extension đang chạy bản <b>${esc(st.extension_version)}</b>, tool cần <b>${esc(st.extension_expected)}</b>.
+     Mở <code>edge://extensions</code> → bấm <b>Tải lại (⟳)</b> ở “Novel Translator – Wattpad Helper” → F5 các tab Wattpad.
+     Bản cũ sẽ không đăng đúng được.</div>` : "";
+
 async function refreshWattpad() {
   try {
     const st = await api("GET", "/api/wattpad/status");
@@ -478,7 +485,7 @@ async function refreshWattpad() {
     $("#wpLoginBtn").textContent = ext ? "Mở Wattpad (Edge của bạn)" : "Đăng nhập Wattpad…";
     $("#wpStoriesBtn").textContent = ext ? "↻ Lấy danh sách từ My Works" : "↻ Tải danh sách truyện";
     if (ext) $("#wpSession").innerHTML = st.extension_connected
-      ? `🟢 Extension đã kết nối. Wattpad sẽ được mở ngay trong trình duyệt này (dùng đăng nhập + VPN của bạn).`
+      ? staleExtension(st) + `🟢 Extension đã kết nối. Wattpad sẽ được mở ngay trong trình duyệt này (dùng đăng nhập + VPN của bạn).`
       : `⚪ Chưa thấy extension <b>Novel Translator – Wattpad Helper</b>${st.extension_last_seen ? ` (lần cuối ${esc(fmtTime(st.extension_last_seen))})` : ""}.
          Cài 1 lần: mở <code>edge://extensions</code> → bật <i>Developer mode</i> → <i>Load unpacked</i> → chọn thư mục
          <code>extension</code> trong thư mục tool. Sau đó mở một trang Wattpad để extension kết nối.`;
@@ -661,6 +668,8 @@ function init() {
   $("#wpManualForm").addEventListener("submit", addManualStory);
   for (const id of ["#wpConfirm", "#wpStory", "#wpMode", "#wpTitle"]) $(id).addEventListener("input", updatePublishButton);
   $("#wpPublishBtn").addEventListener("click", publish);
+  document.addEventListener("nt:toast", (ev) => toast(ev.detail.msg, ev.detail.kind));
+  document.addEventListener("nt:reload-project", () => { if (S.project && !S.dirty) openProject(S.project.id); });
 
   window.addEventListener("beforeunload", (ev) => { if (S.dirty) { ev.preventDefault(); ev.returnValue = ""; } });
   setInterval(() => { if (S.dirty && !$("#viewEditor").classList.contains("hidden")) saveDraft({ quiet: true }); }, 60000);

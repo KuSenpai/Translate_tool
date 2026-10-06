@@ -40,6 +40,9 @@ class JobManager:
                                  "message": job.get("_timeout_message") or "Hết thời gian chờ."})
         return {k: v for k, v in job.items() if not k.startswith("_")}
 
+    def busy(self) -> bool:
+        return bool(self._active and self.jobs[self._active]["state"] == "running")
+
     # --- jobs driven from outside (the browser extension reports progress and the result) -------
     def start_external(self, kind: str, message: str, timeout: int, timeout_message: str,
                        on_done: Optional[Callable[[dict, dict], None]] = None) -> dict:

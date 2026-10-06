@@ -38,12 +38,12 @@ Sau khi sửa `.env` phải khởi động lại tool. Muốn thử giao diện 
 
 ## Tính năng chính
 
-| Nút trên màn hình chính | Việc làm |
-|---|---|
-| Mở file Word → editor | Sửa bản Việt, AI gợi ý, glossary, Preview, Save DOCX, đăng Wattpad |
-| 🤖 Dịch AI | Dịch cả truyện Hàn → Việt bằng Claude API, Claude Code (gói Pro/Max) hoặc Gemini (Antigravity) |
-| 📚 Thuật ngữ | Kho thuật ngữ + ghi chú truyện, quét chương cũ bằng AI, kiểm tra nhất quán |
-| 🧹 Xử lý data thô | Làm sạch bản dịch dán từ ChatGPT; tách raw tiếng Hàn chưa dịch |
+| Nút trên màn hình chính | Việc làm                                                                                              |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------- |
+| Mở file Word → editor      | Sửa bản Việt, AI gợi ý, glossary, Preview, Save DOCX, đăng Wattpad                               |
+| 🤖 Dịch AI                  | Dịch cả truyện Hàn → Việt bằng Claude API, Claude Code (gói Pro/Max), Gemini (Antigravity) hoặc Grok (xAI) |
+| 📚 Thuật ngữ               | Kho thuật ngữ + ghi chú truyện, quét chương cũ bằng AI, kiểm tra nhất quán                  |
+| 🧹 Xử lý data thô         | Làm sạch bản dịch dán từ ChatGPT; tách raw tiếng Hàn chưa dịch                               |
 
 ## Cách dùng
 
@@ -82,6 +82,7 @@ Trạng thái chương: `LOADED → EDITING → REVIEWED → READY_TO_PUBLISH �
 
 Chọn model **Claude Code · Opus** hoặc **Claude Code · Sonnet** (ở 🤖 Dịch AI và 📚 Thuật ngữ): tool gọi lệnh `claude -p`
 trên máy — trừ vào lượt dùng của gói Claude, **không tính tiền API**, không cần `ANTHROPIC_API_KEY`.
+
 1. Cài Claude Code (nếu chưa có): `npm install -g @anthropic-ai/claude-code`
 2. Đăng nhập một lần bằng tài khoản có gói: `claude auth login --claudeai`
 3. Khi gói hết lượt, job tự **tạm dừng** (chương đang dịch quay lại hàng chờ) → bấm **Tiếp tục** khi gói được làm mới.
@@ -93,6 +94,7 @@ Tool xoá `ANTHROPIC_API_KEY` khỏi môi trường khi gọi `claude`, nên kh�
 
 Chọn model **Antigravity · Gemini Pro** hoặc **Antigravity · Gemini Flash** (ở 🤖 Dịch AI và 📚 Thuật ngữ): tool gọi
 Antigravity CLI (`agy`) ở chế độ headless — dùng hạn mức của tài khoản Google đăng nhập Antigravity, **không tính tiền API**.
+
 1. Cài Antigravity CLI (PowerShell): `irm https://antigravity.google/cli/install.ps1 | iex`
 2. Chạy `agy` một lần trong terminal để đăng nhập Google, thoát ra (Ctrl+D hai lần).
 3. Chọn model Antigravity trong tool → tool chạy `agy models` để kiểm tra đăng nhập và tự chọn bản Gemini mới nhất
@@ -107,9 +109,24 @@ tự yêu cầu dịch lại chương đó một lần kèm lời nhắc lỗi.
 đọc/ghi file của bạn. Hết hạn mức → job tạm dừng như Claude Code. Gemini có bộ lọc an toàn riêng: vài cảnh 18+ có thể bị chặn
 (`AI_REFUSED`) — dịch lại các chương đó bằng model Claude.
 
+### Dịch bằng Grok (xAI) — cho truyện 18+
+
+Chọn model **Grok (xAI) · mạnh nhất** hoặc **Grok (xAI) · rẻ** (ở 🤖 Dịch AI và 📚 Thuật ngữ). Grok ít chặn cảnh 18+ hơn
+Claude/Gemini nên hợp để dịch lại các chương bị `AI_REFUSED`. Tính tiền theo token trên tài khoản xAI.
+
+1. Lấy API key ở console.x.ai, nạp credit.
+2. Thêm vào `.env`: `XAI_API_KEY=xai-...` rồi khởi động lại tool.
+3. Chọn model Grok trong tool → tool gọi `GET /v1/models` kiểm tra key và báo nếu slug model không có.
+   Mặc định `grok-4.7` (mạnh) / `grok-4.3` (rẻ); đổi bằng `XAI_MODEL` / `XAI_MODEL_FAST`.
+
+Tool dùng chung prompt dịch với Claude (`SYSTEM_PROMPT` + *Hướng dẫn văn phong*, đã có mục cảnh 18+), gọi qua API tương thích OpenAI
+(`https://api.x.ai/v1`, đổi bằng `XAI_BASE_URL`). Sai số đoạn hoặc sót chữ Hàn thì tự dịch lại chương một lần. Hết credit → job tạm dừng,
+nạp thêm rồi bấm **Tiếp tục**.
+
 ## Kho thuật ngữ (📚 Thuật ngữ) — giữ tên nhân vật, chiêu thức… thống nhất
 
 Mỗi truyện (project = file Word song ngữ các chương cũ) có một kho thuật ngữ:
+
 1. **Data của bạn**: nhập file .txt/.csv/.json/.docx hoặc dán. Dòng `김수현 = Kim Soo-hyun (ghi chú)` (hoặc `→`, Tab, `:`)
    thành thuật ngữ; các dòng mô tả khác thành **Ghi chú truyện** (nhân vật, quan hệ, xưng hô, bối cảnh).
 2. **Quét chương cũ bằng AI**: Claude đọc các chương đã dịch (Hàn + Việt), lấy tên nhân vật, chiêu thức, địa danh, vật phẩm,
@@ -119,7 +136,7 @@ Mỗi truyện (project = file Word song ngữ các chương cũ) có một kho 
    Từ trong ngoặc `[ ]「」『』` lặp lại nhiều chương nhưng chưa có trong kho được gợi ý để thêm.
 4. Khi **🤖 Dịch AI** chọn “Dùng glossary của” truyện này: mỗi chương được gửi kèm các thuật ngữ có mặt trong chương đó
    + ghi chú truyện; thuật ngữ mới AI gặp khi dịch có thể đưa vào kho bằng nút **📚 Đưa … thuật ngữ mới vào kho**.
-   Editor (tab Lỗi) và AI gợi ý sửa cũng dùng kho này; “Tránh dùng” = cách dịch cũ bị cảnh báo khi còn xuất hiện.
+     Editor (tab Lỗi) và AI gợi ý sửa cũng dùng kho này; “Tránh dùng” = cách dịch cũ bị cảnh báo khi còn xuất hiện.
 
 ## Xử lý data thô (🧹)
 
@@ -172,19 +189,64 @@ Tool không điều khiển được Edge bạn đang dùng hằng ngày (Edge c
 và VPN của bạn.
 
 **Cài một lần:**
+
 1. Mở `edge://extensions`, bật **Developer mode** (góc trái dưới).
 2. Bấm **Load unpacked** → chọn thư mục `extension` trong thư mục tool (`<thư mục tool>\extension`).
 3. Mở tool ở `http://127.0.0.1:8765` **trong chính Edge đó**.
 
+> Sau khi cập nhật tool (thư mục `extension` đổi), vào `edge://extensions` và bấm **Tải lại (⟳)** ở extension, rồi
+> F5 các tab Wattpad đang mở. Nếu quên, tool tự cảnh báo “Extension đang chạy bản cũ” ở màn Preview và thẻ đăng nhiều
+> chương (bản cũ không đăng đúng được: nó có thể kẹt ở “Đang mở trang soạn phần mới”).
+
 **Dùng:**
+
 - Preview → **Mở Wattpad (Edge của bạn)** / **↻ Lấy danh sách từ My Works**: mở My Works trong tab mới; extension gửi
-  danh sách truyện về tool.
-- Chọn truyện, tick xác nhận, **Publish** → tool mở tab Wattpad; extension mở truyện → New Part → điền tiêu đề + nội dung
-  → lưu → đếm ngược 5 giây (bấm **Huỷ** trên khung thông báo nếu muốn dừng) → Publish → báo kết quả về tool.
+  danh sách truyện về tool. Hoặc dán link của truyện (kể cả link soạn thảo `…/myworks/<truyện>/write/<phần>`) vào ô
+  “Thêm truyện bằng link”.
+- Chọn truyện, tick xác nhận, **Publish** → tool mở tab Wattpad và extension làm đúng như bạn làm tay:
+  1. Ở trang truyện (`/myworks/<truyện>`) **mở chương mới nhất** trong danh sách (không bấm nút `+ New Part` ở trang
+     này — nó chỉ thêm một bản nháp trống vào danh sách chứ không mở ra).
+  2. Chương mới nhất **đã publish** → mở menu danh sách phần ở góc trái trên của editor → **New Part** → được chương trống.
+     Chương mới nhất là **bản nháp trống** (vd “Untitled Part 78”) → dùng luôn chương đó. Chương mới nhất là bản nháp **đã
+     có chữ** → dừng, báo lỗi `WATTPAD_LATEST_DRAFT_NOT_EMPTY` (không ghi đè việc của bạn).
+  3. Điền tiêu đề + nội dung → lưu → đếm ngược 5 giây (bấm **Huỷ** trên khung thông báo nếu muốn dừng) → **Publish**.
+  4. Popup xác nhận **của trình duyệt** (`confirm()`) được extension tự bấm OK — chỉ trong lúc nó vừa bấm Publish, các lúc
+     khác popup của trang vẫn hiện bình thường (`extension/page_hook.js`). Popup trong trang (nếu có, kể cả hai bước) cũng
+     được xử lý. Rồi báo kết quả về tool.
+- Extension chỉ điền vào phần **do chính nó vừa tạo**, chương trống mới nhất, hoặc phần đã tạo ở lần thử trước của cùng
+  chương — không bao giờ ghi đè một chương đã có. Nếu tab đang mở editor của một chương cũ, nó tự chuyển sang chương
+  mới nhất trước.
+- Bấm **Huỷ** trong tool (hoặc trên khung thông báo ở trang Wattpad) là extension dừng, kể cả khi đang đếm ngược trước
+  khi bấm Publish. Nhiều tab Wattpad cùng mở thì chỉ một tab nhận việc, không bị tạo trùng chương.
 - Nút extension trên thanh công cụ: xem trạng thái kết nối, đổi địa chỉ tool, **Gửi chẩn đoán trang** (lưu cấu trúc
   trang Wattpad vào `data/logs/wattpad/` để sửa khi Wattpad đổi giao diện).
+- Popup trong trang được tìm theo cách nó che trang (không cần `role="dialog"`); chỉ các nhãn trong `confirm_texts` mới
+  bị bấm. Nếu Wattpad đổi nhãn nút/popup, tool báo `WATTPAD_CONFIRM_NOT_FOUND` kèm **nội dung popup**; bấm **Gửi chẩn đoán
+  trang** (khi popup đang mở) hoặc thêm nhãn vào `confirm_texts` / `confirm_selectors`.
 - Nhãn nút / selector nằm ở mục `"ext"` trong `app/publishing/wattpad_selectors.json`; extension đọc trực tiếp từ tool nên
   sửa file này không cần cài lại extension.
+
+### Đăng nhiều chương cùng lúc
+
+Màn hình chọn chương (sau khi mở file Word) có thẻ **📤 Đăng nhiều chương lên Wattpad**:
+
+1. Chọn **truyện** (danh sách lấy từ My Works, hoặc thêm bằng link ở màn Preview) và nhập các chương, ví dụ `12-20, 25`
+   (nút **Chọn các chương chưa đăng** điền sẵn). Chọn *Publish* hoặc *Chỉ lưu nháp*.
+2. Tick **Tôi xác nhận các chương này là bản cuối cùng** → **Đăng N chương** → xác nhận. Tool mở một tab Wattpad.
+3. Tool đăng **lần lượt từng chương, theo thứ tự số chương**, mỗi chương cách nhau vài giây (`BATCH_DELAY` trong
+   `app/publishing/publish_service.py`, mặc định 8 giây). Tiến độ từng chương hiện ngay dưới nút; **Huỷ đợt đăng** dừng
+   ngay, chương đã đăng không bị gỡ.
+
+Lưu ý:
+
+- **Giữ tab Wattpad đó mở và hiển thị** (đừng thu nhỏ cửa sổ, đừng để tab chạy nền lâu) — extension chạy trong tab này;
+  trình duyệt làm chậm tab ẩn và đóng băng hiệu ứng giao diện của Wattpad (menu, popup). Extension có cách dự phòng cho
+  trường hợp này nhưng tab ở trên cùng vẫn là chắc chắn nhất.
+- Chương chưa mở trong editor được tự đọc từ file Word; xác nhận cả đợt tính là đã review. Chương **đã đăng** được bỏ
+  qua; chương parser không chắc ranh giới (độ tin cậy thấp, chưa mở xem) bị chặn — mở nó trong editor để kiểm tra trước.
+- Tiêu đề trên Wattpad = tiêu đề chương trong editor.
+- **Gặp lỗi ở chương nào là dừng ngay ở đó** (các chương sau không bị đụng tới) để không đăng lệch thứ tự. Sửa lỗi rồi bấm
+  đăng lại cùng khoảng chương: chương lỗi cập nhật đúng phần đã tạo (không tạo trùng), các chương sau chạy tiếp.
 
 Extension chỉ nói chuyện với tool trên máy (`127.0.0.1`), không đọc mật khẩu hay cookie. API của nó (`/api/ext/*`) chỉ
 nhận request có header riêng của extension, các trang web khác không gọi được.
