@@ -38,12 +38,12 @@ Sau khi sửa `.env` phải khởi động lại tool. Muốn thử giao diện 
 
 ## Tính năng chính
 
-| Nút trên màn hình chính | Việc làm                                                                                              |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------- |
-| Mở file Word → editor      | Sửa bản Việt, AI gợi ý, glossary, Preview, Save DOCX, đăng Wattpad                               |
-| 🤖 Dịch AI                  | Dịch cả truyện Hàn → Việt bằng Claude API, Claude Code (gói Pro/Max), Gemini (Antigravity) hoặc Grok (xAI) |
-| 📚 Thuật ngữ               | Kho thuật ngữ + ghi chú truyện, quét chương cũ bằng AI, kiểm tra nhất quán                  |
-| 🧹 Xử lý data thô         | Làm sạch bản dịch dán từ ChatGPT; tách raw tiếng Hàn chưa dịch                               |
+| Nút trên màn hình chính | Việc làm                                                                                                                                    |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Mở file Word → editor      | Sửa bản Việt, AI gợi ý, glossary, Preview, Save DOCX, đăng Wattpad                                                                     |
+| 🤖 Dịch AI                  | Dịch cả truyện Hàn → Việt bằng Claude API, Claude Code (gói Pro/Max), Gemini (Antigravity), Grok (API xAI / Grok CLI) hoặc OmniRoute |
+| 📚 Thuật ngữ               | Kho thuật ngữ + ghi chú truyện, quét chương cũ bằng AI, kiểm tra nhất quán                                                        |
+| 🧹 Xử lý data thô         | Làm sạch bản dịch dán từ ChatGPT; tách raw tiếng Hàn chưa dịch                                                                     |
 
 ## Cách dùng
 
@@ -122,6 +122,78 @@ Claude/Gemini nên hợp để dịch lại các chương bị `AI_REFUSED`. Tí
 Tool dùng chung prompt dịch với Claude (`SYSTEM_PROMPT` + *Hướng dẫn văn phong*, đã có mục cảnh 18+), gọi qua API tương thích OpenAI
 (`https://api.x.ai/v1`, đổi bằng `XAI_BASE_URL`). Sai số đoạn hoặc sót chữ Hàn thì tự dịch lại chương một lần. Hết credit → job tạm dừng,
 nạp thêm rồi bấm **Tiếp tục**.
+
+### Dịch bằng Grok CLI (đăng nhập grok.com, không cần API key)
+
+Chọn model **Grok CLI** (ở 🤖 Dịch AI và 📚 Thuật ngữ): tool gọi lệnh `grok` ở chế độ headless bằng tài khoản grok.com bạn đã đăng nhập.
+
+1. Cài (PowerShell, không phải cmd): `irm https://x.ai/cli/install.ps1 | iex`
+2. Chạy `grok` một lần để đăng nhập (trình duyệt mở ra). Tool tự tìm `grok.exe` trong PATH hoặc `~/.grok/bin`
+   (đổi bằng `GROK_CLI_PATH`). Model mặc định của tài khoản; ép model bằng `GROK_CLI_MODEL` (xem `grok models`).
+3. Chọn **Grok CLI** trong tool → tool chạy `grok models` để kiểm tra đăng nhập.
+
+**Nhiều tài khoản grok.com:** mỗi tài khoản là một thư mục `GROK_HOME` riêng (có `auth.json` riêng). Đăng nhập tài khoản thứ hai (PowerShell):
+
+```powershell
+New-Item -ItemType Directory -Force D:\Tool\Translate_tool\data\grok_accounts\acc2
+$env:GROK_HOME = "D:\Tool\Translate_tool\data\grok_accounts\acc2"
+& "$env:USERPROFILE\.grok\bin\grok.exe" login      # đăng nhập bằng tài khoản thứ hai, rồi đóng cửa sổ
+```
+
+Rồi liệt kê trong `.env`: `GROK_CLI_HOMES=default;D:/Tool/Translate_tool/data/grok_accounts/acc2` (`default` = tài khoản `grok` đang đăng nhập sẵn). Tool xoay vòng các lệnh gọi
+giữa các tài khoản (các phần chia song song của một chương chạy trên các tài khoản khác nhau, nên không còn dính giới hạn 2 yêu cầu/giây của riêng một tài khoản) và
+tự chuyển sang tài khoản khác ngay khi một tài khoản bị giới hạn tốc độ / hết lượt (nghỉ 45 giây / 30 phút). Chỉ muốn đổi hẳn sang tài khoản khác: `grok logout` rồi `grok login`.
+
+`grok` chạy trong một thư mục trống ngoài dự án, tắt hết công cụ (`--tools ""`) và tìm web, nên agent không đọc/ghi file của bạn.
+Mỗi lần gọi có ~14k token chi phí cố định của agent (phần lớn được cache). Hết hạn mức → job tạm dừng, bấm **Tiếp tục** khi được làm mới.
+
+## Dịch lại chương bằng AI (trình sửa chương)
+
+Trong trình sửa một chương, bấm **🔁 Dịch lại chương** (hoặc mở mục *Dịch lại cả chương bằng AI* ở tab ✨ AI): chọn model (Claude, Claude Code,
+Gemini, Grok…), mức suy luận, thêm yêu cầu riêng nếu muốn → tool dịch lại cả chương từ **bản Hàn**, kèm glossary, ghi chú truyện và
+đoạn cuối chương trước. Kết quả chỉ hiện để xem; bấm **Áp dụng** mới thay bản đang sửa (có thể Undo, rồi Save Draft). Hợp để thử Grok
+cho chương bị AI khác từ chối vì cảnh 18+.
+
+### Dịch qua OmniRoute (cổng AI cục bộ)
+
+[OmniRoute](https://github.com/diegosouzapw/OmniRoute) là cổng AI chạy trên máy bạn (mặc định `http://localhost:20128`), gom nhiều nhà cung cấp / tài khoản / combo
+sau một endpoint tương thích OpenAI. Chọn model **OmniRoute** ở 🤖 Dịch AI, 📚 Thuật ngữ và mục dịch lại chương. Điền trong `.env`:
+
+```
+OMNIROUTE_API_KEY=...      # tạo trong dashboard OmniRoute
+OMNIROUTE_MODEL=...        # đúng tên model hoặc combo như OmniRoute liệt kê (dashboard hoặc GET /v1/models)
+OMNIROUTE_BASE_URL=        # tuỳ chọn, mặc định http://localhost:20128/v1
+```
+
+Khi chọn model OmniRoute, tool hỏi `GET /v1/models` để kiểm tra key và tên model, và liệt kê các model có sẵn nếu `OMNIROUTE_MODEL` sai. Nếu model phía sau không
+hỗ trợ JSON schema nghiêm ngặt, tool tự hạ xuống `json_object` rồi văn bản thường (đưa schema vào prompt và tự đọc kết quả). Chi phí / hạn mức do OmniRoute và các nhà cung cấp
+bạn nối trong đó quyết định; tool không ước tính được tiền.
+
+## Tự đặt tiêu đề theo arc (🏷)
+
+Truyện chia thành nhiều arc dài xen kẽ nhau; tiêu đề chương có dạng **`Số chương. Tên arc (n)`** (ví dụ `2761. Atlantis của Thần (107)`),
+với `n` là chương thứ mấy của arc đó. Trong trình sửa chương bấm **🏷 Tự đặt tiêu đề**:
+
+- Arc được nhận từ **tiêu đề tiếng Hàn** của chương (`다크 문` → *Dark Moon*). Chương không có tiêu đề Hàn (file raw mới chỉ ghi `2760화`)
+  thì **theo arc của chương trước** — đổi bằng danh sách chọn arc. Tiêu đề Hàn lạ → tạo **arc nhỏ mới** (có nút 🤖 Dịch tên); số `(n)` của arc nhỏ tự đếm.
+- 6 arc lớn có sẵn (Atlantis của Thần, Quang Minh Thăng Thiên Đồ, Eternal Eden, Dark Moon, Cứu Tinh Học Viện, Kiếm sĩ Hoa Mai…) và được nhớ lâu dài
+  cùng số thứ tự: **Quản lý arc…** cho sửa tên, tên Hàn, mẫu tiêu đề, và cột **Đã tới số** (sửa thành số thật trên Wattpad thì các chương sau đếm tiếp từ đó).
+- **↻ Dựng từ file Word** quét các file của truyện để gán arc cho mọi chương đã có (arc nhỏ tự tạo, tên lấy từ tiêu đề Việt cũ).
+- `n` được tính từ thứ tự chương (số chương đã gán cho arc ở phía dưới), nên bấm Áp dụng lại không đếm đôi và gán lệch thứ tự vẫn đúng.
+  Dữ liệu ở `data/stories/<truyện>/arcs.json` (hoặc trong thư mục project nếu chưa thuộc truyện nào). Chương mới load sẽ lấy sẵn tiêu đề này nếu đã gán arc.
+
+## Đối chiếu thuật ngữ với chương cũ trên Wattpad (📚 → mục 3b)
+
+Chương cũ bạn đã đăng được coi là **đúng hơn** glossary hiện tại. Mục **3b** cào chúng về, so với kho thuật ngữ và đưa chỗ khác nhau vào mục 4
+(nguồn “chương cũ Wattpad”, có cột *hiện tại*; nhận đề xuất thì dùng cách dịch cũ và giữ cách hiện tại trong danh sách “tránh”).
+
+1. Tải lại extension (`edge://extensions` → Reload; phải là **v1.3.0**), bật VPN, mở một tab `wattpad.com` trong Edge.
+2. Ở 📚 Thuật ngữ: tick các truyện Wattpad (lấy từ My Works), nhập **file Hàn gốc** (`.txt`/`.docx` chứa các chương đó, ví dụ
+   `data/Data raw/into-the-creative-work/[610] 창작물 속으로.txt` — phải là bản tiếng Hàn, không phải `book.txt` tiếng Anh), khoảng chương, chọn model rồi bấm **Cào & đối chiếu**.
+3. Extension đọc danh sách chương + nội dung qua endpoint của chính Wattpad (không sửa gì trên Wattpad), gửi về tool; tool ghép với bản Hàn theo số chương,
+   bỏ dòng ghi chú đầu chương (`Note: …`, `-`), rồi cho AI so từng nhóm chương với glossary. **Dữ liệu cào không được lưu** (chỉ giữ trong RAM đến khi xong).
+4. Tiêu đề đã đăng (`2201. Dark Moon (165)`) cũng cập nhật **số thứ tự arc** (🏷): mỗi chương được gán đúng arc và bộ đếm đặt theo chương mới nhất đã đăng.
+   Arc có tên hơi khác (bỏ qua các từ nối “của/trong/vào”) được coi là cùng một arc; tên khác hẳn thì tạo arc nhỏ mới.
 
 ## Kho thuật ngữ (📚 Thuật ngữ) — giữ tên nhân vật, chiêu thức… thống nhất
 

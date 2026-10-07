@@ -262,7 +262,8 @@ function renderChapter(ch, { keepEditor = false } = {}) {
 
   renderIssues(ch.issues);
   if (!keepEditor) {
-    S.suggestion = null;
+    S.suggestion = null; S.retrans = null; S.titleSug = null; $("#titleStrip").classList.add("hidden");
+    $("#rtResult").innerHTML = "";
     $("#aiResult").innerHTML = `Chọn (bôi đen) một đoạn trong bản Việt rồi bấm <b>✨ Suggest correction</b>. AI chỉ gợi ý — bạn quyết định có Apply hay không.`;
   }
 }
@@ -385,6 +386,254 @@ function applySuggestion() {
   snapshot(); setDirty(true);
   S.suggestion = null;
   $("#aiResult").innerHTML = `<div class="muted small">✔ Đã áp dụng gợi ý (Undo để hoàn tác).</div>`;
+}
+
+// ---------------------------------------------------------------- re-translate the whole chapter
+async function loadRetransModels() {
+  if (S.models) return;
+  try {
+    S.models = (await api("GET", "/api/translate/info")).models;
+    const last = store.get("rt:model");
+    $("#rtModel").innerHTML = S.models.map((m) => `<option value="${esc(m.id)}" ${m.id === last ? "selected" : ""}>${esc(m.label)}</option>`).join("");
+    const lowDefault = () => { const m = S.models.find((x) => x.id === $("#rtModel").value); if (m && /^grok/.test(m.provider)) $("#rtEffort").value = "low"; $("#rtParallel").value = m && /^grok/.test(m.provider) ? "3" : "1"; };
+    $("#rtModel").addEventListener("change", lowDefault); lowDefault();   // Grok spends minutes "thinking" at medium/high
+  } catch (e) { $("#rtResult").innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
+}
+
+function consistencyHtml(r) {
+  const c = r.consistency || {};
+  const warns = (r.issues || []).filter((i) => i.level === "warn" || i.level === "error");
+  const li = (arr, f) => arr.length ? `<ul class="small" style="margin:2px 0 0;padding-left:18px">${arr.map(f).join("")}</ul>` : "";
+  const ctx = (c.previous_chapters || []).length ? `đối chiếu chương ${c.previous_chapters.join(", ")}` : "chưa có chương trước để đối chiếu";
+  return `<h5>Kiểm tra thuật ngữ</h5><div class="reason">${c.terms_in_chapter ? `✔ ${c.terms_ok}/${c.terms_in_chapter} thuật ngữ glossary khớp` : "Không có thuật ngữ glossary trong chương này"}
+      · ${ctx}${c.hints_used ? ` · ${c.hints_used} gợi ý từ chương cũ` : ""}${c.retried ? " · đã tự dịch lại 1 lần để sửa lỗi" : ""}
+      ${li(warns, (i) => `<li class="muted">${i.block != null ? `¶${i.block + 1}: ` : ""}${esc(i.message)}</li>`)}
+      ${li(c.terms_missing || [], (m) => `<li class="muted">Thiếu “${esc(m.target)}” (${esc(m.source)})</li>`)}
+      ${li(c.new_term_conflicts || [], (m) => `<li style="color:#c07a00">Thuật ngữ mới “${esc(m.source)} → ${esc(m.target)}”: chương ${m.chapter} đã có từ này nhưng không dùng cách dịch đó — kiểm tra lại.</li>`)}</div>`;
+}
+
+async function retranslate() {
+  if (!S.chapter) return;
+  const number = S.chapter.number, pid = S.project.id;
+  await loadRetransModels();
+  const model = $("#rtModel").value;
+  if (!model) return toast("Chưa có danh sách model.", "error");
+  if (S.dirty && !confirm("Bản đang sửa có thay đổi chưa lưu. Kết quả dịch lại chỉ hiện để xem, chưa thay gì — tiếp tục?")) return;
+  store.set("rt:model", model);
+  $("#rtStart").disabled = true;
+  const t0 = Date.now();
+  const tick = () => { $("#rtResult").innerHTML = `<div class="muted">⏳ Đang dịch lại chương ${number}… ${Math.floor((Date.now() - t0) / 60000)}:${String(Math.floor(((Date.now() - t0) / 1000) % 60)).padStart(2, "0")}
+      — model suy luận có thể mất vài phút (nếu bật “tự dịch lại” và bản dịch vi phạm glossary thì thêm vài phút nữa). Đừng đóng trang.</div>`; };
+  tick(); const timer = setInterval(tick, 1000);
+  try {
+    const r = await api("POST", `/api/projects/${pid}/chapters/${number}/retranslate`, {
+      model, effort: $("#rtEffort").value, instruction: $("#rtInstruction").value.trim(), auto_fix: $("#rtAutoFix").checked, parallel: +$("#rtParallel").value,
+    });
+    if (!S.chapter || S.chapter.number !== number || S.project.id !== pid) return;   // user moved to another chapter meanwhile
+    S.retrans = r; r.elapsed = Math.round((Date.now() - t0) / 1000);
+    renderRetransSummary(); openRetransDialog();
+  } catch (e) {
+    $("#rtResult").innerHTML = `<div class="alert error">${e.code ? `<b>[${esc(e.code)}]</b> ` : ""}${esc(e.message)}</div>`;
+  } finally { clearInterval(timer); $("#rtStart").disabled = false; }
+}
+
+// Result UI: a compact summary in the narrow side tab + a wide dialog (compare, per-paragraph copy, one-click replace).
+const blocksText = (blocks) => (blocks || []).map((b) => (b.runs || []).map((r) => r.text).join(""));
+async function copyText(text, okMsg) {
+  try { await navigator.clipboard.writeText(text); }
+  catch {
+    const t = document.createElement("textarea"); t.value = text; t.style.cssText = "position:fixed;opacity:0";
+    document.body.appendChild(t); t.select(); const ok = document.execCommand("copy"); t.remove();
+    if (!ok) return toast("Không copy được — trình duyệt chặn clipboard.", "error");
+  }
+  toast(okMsg, "ok");
+}
+
+function retransStats(r) {
+  const mismatch = r.paragraph_count.source !== r.paragraph_count.result;
+  const c = r.consistency || {};
+  return { mismatch, line: [
+    esc(r.model), `${r.blocks.length} đoạn`,
+    c.terms_in_chapter ? `thuật ngữ ${c.terms_ok}/${c.terms_in_chapter}` : "",
+    r.elapsed ? `${Math.floor(r.elapsed / 60)}:${String(r.elapsed % 60).padStart(2, "0")}` : "",
+    r.cost_usd ? `~$${r.cost_usd.toFixed(2)}` : "",
+  ].filter(Boolean).join(" · ") };
+}
+
+function renderRetransSummary() {
+  const r = S.retrans; if (!r) return;
+  const { mismatch, line } = retransStats(r);
+  $("#rtResult").innerHTML = `<div class="suggest-box rt-summary">
+    <div class="rt-ok">✔ Đã dịch xong chương ${r.number}</div>
+    ${mismatch ? `<div class="alert error">Số đoạn lệch: Hàn ${r.paragraph_count.source} ≠ kết quả ${r.paragraph_count.result}.</div>` : ""}
+    <div class="muted small">${line}</div>
+    <label class="check"><input type="checkbox" class="rt-title-cb" ${S.rtWithTitle === false ? "" : "checked"}> Cập nhật cả tiêu đề</label>
+    <div class="rt-btns">
+      <button class="primary" data-rt="apply" title="Thay ngay bản đang sửa bằng bản dịch lại (Undo được)">⚡ Thay bản hiện tại</button>
+      <button data-rt="copy">📋 Copy</button>
+      <button data-rt="open">🔎 Xem / so sánh</button>
+      <button class="ghost" data-rt="dismiss">Bỏ qua</button>
+    </div></div>`;
+  $("#rtResult").querySelectorAll("[data-rt]").forEach((b) => b.addEventListener("click", () => retransAction(b.dataset.rt)));
+  bindTitleCb($("#rtResult"));
+}
+function bindTitleCb(root) {
+  root.querySelectorAll(".rt-title-cb").forEach((cb) => cb.addEventListener("change", () => {
+    S.rtWithTitle = cb.checked; $$(".rt-title-cb").forEach((x) => { x.checked = cb.checked; });
+  }));
+}
+
+function retransAction(act) {
+  const r = S.retrans; if (!r) return;
+  if (act === "apply") applyRetranslation();
+  else if (act === "apply-save") applyRetranslation({ save: true });
+  else if (act === "copy") copyText(blocksText(r.blocks).join("\n\n"), `Đã copy bản dịch (${r.blocks.length} đoạn)`);
+  else if (act === "copy-title") copyText(r.title, "Đã copy tiêu đề");
+  else if (act === "open") openRetransDialog();
+  else if (act === "dismiss") { S.retrans = null; $("#rtDialog").close(); $("#rtResult").innerHTML = `<div class="muted small">Đã bỏ qua bản dịch lại.</div>`; }
+}
+
+function renderRetransDialog() {
+  const r = S.retrans; if (!r) return;
+  const { mismatch, line } = retransStats(r);
+  const mode = $("#rtCompare").value;
+  const old = mode === "draft" ? blocksText(editorToBlocks(ed())) : mode === "ko" ? blocksText(S.chapter.ko_blocks) : null;
+  $("#rtDlgTitle").textContent = `Bản dịch lại — chương ${r.number}`;
+  $("#rtDlgSub").innerHTML = line;
+  $("#rtDlgTitleCb").checked = S.rtWithTitle !== false;
+  const curTitle = $("#titleInput").value.trim();
+  const head = `${mismatch ? `<div class="alert error">Số đoạn lệch: bản Hàn ${r.paragraph_count.source}, kết quả ${r.paragraph_count.result}. Xem kỹ trước khi thay.</div>` : ""}
+    <div class="rt-title-row"><span class="muted small">Tiêu đề mới</span> <b>${esc(r.title)}</b>
+      ${curTitle && curTitle !== r.title ? `<span class="muted small">(đang là: ${esc(curTitle)})</span>` : ""}</div>
+    <details class="rt-checks"><summary>Kiểm tra thuật ngữ${(r.issues || []).some((i) => i.level !== "info") ? " ⚠" : ""}</summary><div class="suggest-box">${consistencyHtml(r)}
+      ${r.new_terms?.length ? `<h5>Thuật ngữ mới AI dùng</h5><div class="reason">${r.new_terms.map((t) => `${esc(t.source)} → ${esc(t.target)}`).join("<br>")}</div>` : ""}</div></details>`;
+  const n = old ? Math.max(old.length, r.blocks.length) : r.blocks.length;
+  let rows = "";
+  for (let i = 0; i < n; i++) {
+    const b = r.blocks[i];
+    rows += `<div class="rt-row ${old ? "two" : ""}">${old ? `<div class="rt-cell old ${mode === "ko" ? "ko" : ""}">${old[i] != null ? esc(old[i]) : ""}</div>` : ""}
+      <div class="rt-cell new"><span class="rt-n">${i + 1}</span>${b ? blocksHtml([b]) : ""}${b ? `<button class="rt-copy ghost small" data-i="${i}" title="Copy đoạn này">📋</button>` : ""}</div></div>`;
+  }
+  const colHead = old ? `<div class="rt-row two rt-colhead"><div>${mode === "ko" ? "Bản Hàn" : "Bản đang sửa"}</div><div>Bản dịch mới</div></div>` : "";
+  $("#rtDlgBody").innerHTML = head + colHead + rows;
+  $("#rtDlgBody").querySelectorAll(".rt-copy").forEach((b) => b.addEventListener("click", () => {
+    const i = +b.dataset.i; copyText(blocksText(r.blocks)[i], `Đã copy đoạn ${i + 1}`);
+  }));
+}
+function openRetransDialog() {
+  if (!S.retrans) return;
+  renderRetransDialog();
+  if (!$("#rtDialog").open) $("#rtDialog").showModal();
+}
+
+function applyRetranslation({ save = false } = {}) {
+  const r = S.retrans;
+  if (!r || !S.chapter || S.chapter.number !== r.number) return;
+  if (H.timer) snapshot();
+  ed().innerHTML = blocksHtml(r.blocks) || "<p><br></p>";
+  if (S.rtWithTitle !== false) $("#titleInput").value = r.title;
+  snapshot(); setDirty(true);
+  $("#viMeta").textContent = `${S.chapter.vi_heading || ""} · ${r.blocks.length} đoạn`;
+  S.retrans = null;
+  $("#rtDialog").close();
+  $("#rtResult").innerHTML = `<div class="muted small">✔ Đã thay bản Việt bằng bản dịch lại (Ctrl+Z / Undo để hoàn tác${save ? "" : ", Save Draft để lưu"}).</div>`;
+  if (save) saveDraft(); else toast("Đã thay bản Việt bằng bản dịch lại — Undo để hoàn tác", "ok");
+}
+
+// ---------------------------------------------------------------- automatic chapter title by story arc
+const SRC_NOTE = {
+  "ko-title": "theo tiêu đề tiếng Hàn", assigned: "đã gán trước đó", previous: "chưa có tiêu đề Hàn → theo arc của chương trước",
+  new: "tiêu đề Hàn mới — tạo arc nhỏ mới", manual: "bạn chọn", none: "chưa biết arc",
+};
+async function titleSuggest(extra = {}) {
+  if (!S.chapter) return;
+  const s = await api("POST", chUrl("/title/suggest"), extra);
+  S.titleSug = s; renderTitleStrip(s);
+}
+function renderTitleStrip(s) {
+  const el = $("#titleStrip");
+  const opts = s.arcs.map((a) => `<option value="${esc(a.id)}" ${s.arc?.id === a.id ? "selected" : ""}>${a.big ? "★ " : ""}${esc(a.name)}</option>`).join("");
+  const isNew = s.source === "new";
+  el.innerHTML = `<b>🏷 Chương ${s.number}</b>
+    <span class="muted small">${esc(SRC_NOTE[s.source] || "")}${s.ko_title ? ` · “${esc(s.ko_title)}”` : ""}</span>
+    <select id="ttArc"><option value="">${isNew ? "➕ Arc mới →" : "— chọn arc —"}</option>${opts}</select>
+    ${isNew ? `<input type="text" id="ttName" value="${esc(s.arc?.name || "")}" placeholder="Tên arc mới">
+      <button id="ttTr" class="small" title="Nhờ AI dịch tên arc (dùng model đang chọn ở mục Dịch lại chương)">🤖 Dịch tên</button>` : ""}
+    <span id="ttTitle">${s.title ? `→ <b>${esc(s.title)}</b>` : `<span class="muted">chọn arc để có tiêu đề</span>`}</span>
+    <button class="primary small" id="ttApply" ${s.title ? "" : "disabled"}>Áp dụng</button>
+    <button class="small" id="ttManage">Quản lý arc…</button><button class="small ghost" id="ttClose">✕</button>`;
+  el.classList.remove("hidden");
+  $("#ttArc").onchange = () => titleSuggest($("#ttArc").value ? { arc_id: $("#ttArc").value } : {}).catch(fail);
+  if ($("#ttName")) $("#ttName").oninput = () => {
+    const t = $("#ttName").value.trim(); S.titleSug.arc.name = t;
+    $("#ttTitle").innerHTML = `→ <b>${esc(`${s.number}. ${t} (1)`)}</b>`; $("#ttApply").disabled = !t;
+  };
+  if ($("#ttTr")) $("#ttTr").onclick = async () => {
+    await loadRetransModels();
+    $("#ttTr").disabled = true;
+    try {
+      const r = await api("POST", `/api/projects/${S.project.id}/arcs/translate-name`, { ko: s.ko_title, model: $("#rtModel").value || "claude-opus-5-5" });
+      $("#ttName").value = r.name; $("#ttName").dispatchEvent(new Event("input"));
+    } catch (e) { fail(e); } finally { $("#ttTr").disabled = false; }
+  };
+  $("#ttApply").onclick = applyArcTitle;
+  $("#ttManage").onclick = openArcManager;
+  $("#ttClose").onclick = () => el.classList.add("hidden");
+}
+async function applyArcTitle() {
+  const s = S.titleSug; if (!s?.arc) return;
+  try {
+    const r = await api("POST", chUrl("/title/apply"), s.arc.id ? { arc_id: s.arc.id } : { new_name: s.arc.name });
+    $("#titleInput").value = r.title; setDirty(true);
+    $("#titleStrip").classList.add("hidden");
+    toast(`Tiêu đề: ${r.title} (nhớ Save Draft)`, "ok");
+  } catch (e) { fail(e); }
+}
+
+const AM = { data: null };
+async function openArcManager() {
+  try { AM.data = await api("GET", `/api/projects/${S.project.id}/arcs`); } catch (e) { return fail(e); }
+  renderArcRows(); $("#arcMsg").textContent = ""; $("#arcDialog").showModal();
+}
+function renderArcRows() {
+  $("#arcTemplate").value = AM.data.template;
+  $("#arcTplHint").textContent = AM.data.template;
+  $("#arcRows").innerHTML = AM.data.arcs.map((a, i) => `<tr data-i="${i}">
+    <td><input type="checkbox" class="aBig" ${a.big ? "checked" : ""}></td>
+    <td><input type="text" class="aName" value="${esc(a.name)}"></td>
+    <td><input type="text" class="aKo" value="${esc((a.ko_raw || []).join(", "))}"></td>
+    <td><input type="number" class="aN" min="0" value="${a.new_last_n ?? a.last_n}"></td>
+    <td class="muted">${a.last_chapter ?? "—"}</td>
+    <td><button type="button" class="aDel ghost small" title="Xoá arc (và các gán chương của nó)">✕</button></td></tr>`).join("");
+  $("#arcRows").querySelectorAll(".aDel").forEach((b) => b.onclick = () => { readArcRows(); AM.data.arcs.splice(+b.closest("tr").dataset.i, 1); renderArcRows(); });
+}
+function readArcRows() {
+  [...$("#arcRows").children].forEach((tr, i) => {
+    const a = AM.data.arcs[i];
+    a.big = tr.querySelector(".aBig").checked; a.name = tr.querySelector(".aName").value.trim();
+    a.ko_raw = tr.querySelector(".aKo").value.split(",").map((x) => x.trim()).filter(Boolean);
+    const n = tr.querySelector(".aN").value;
+    a.new_last_n = n === "" || +n === a.last_n ? null : +n;       // only re-base when the user changed it
+  });
+}
+async function saveArcs() {
+  readArcRows();
+  try {
+    AM.data = await api("PUT", `/api/projects/${S.project.id}/arcs`, {
+      template: $("#arcTemplate").value,
+      arcs: AM.data.arcs.map((a) => ({ id: a.id, name: a.name, ko: a.ko_raw || [], big: a.big, notes: a.notes || "", last_n: a.new_last_n ?? null })),
+    });
+    renderArcRows(); $("#arcMsg").textContent = "✔ Đã lưu."; if (!$("#titleStrip").classList.contains("hidden")) titleSuggest().catch(() => {});
+  } catch (e) { $("#arcMsg").textContent = `${e.code ? `[${e.code}] ` : ""}${e.message}`; }
+}
+async function seedArcs() {
+  if (!confirm("Quét các file Word của truyện để gán arc cho mọi chương đã có (giữ nguyên các chương đã gán)?")) return;
+  $("#arcMsg").textContent = "⏳ Đang quét…";
+  try {
+    const r = await api("POST", `/api/projects/${S.project.id}/arcs/seed`);
+    AM.data = r; renderArcRows();
+    $("#arcMsg").textContent = `✔ ${r.chapters} chương: gán thêm ${r.added} (${r.by_previous} theo chương trước), tạo ${r.created} arc nhỏ mới.`;
+  } catch (e) { $("#arcMsg").textContent = `${e.code ? `[${e.code}] ` : ""}${e.message}`; }
 }
 
 // ---------------------------------------------------------------- glossary
@@ -613,6 +862,22 @@ function init() {
   $("#boldBtn").addEventListener("click", () => { ed().focus(); document.execCommand("bold"); });
   $("#italicBtn").addEventListener("click", () => { ed().focus(); document.execCommand("italic"); });
   $("#suggestBtn").addEventListener("click", suggest);
+  $("#rtStart").addEventListener("click", retranslate);
+  $("#rtDialog").querySelectorAll("[data-rt]").forEach((b) => b.addEventListener("click", () => retransAction(b.dataset.rt)));
+  $("#rtCompare").addEventListener("change", () => { store.set("rt:compare", $("#rtCompare").value); renderRetransDialog(); });
+  { const c = store.get("rt:compare"); if (c) $("#rtCompare").value = c; }
+  bindTitleCb($("#rtDialog"));
+  $("#rtDialog").addEventListener("click", (ev) => { if (ev.target === $("#rtDialog")) $("#rtDialog").close(); });   // click on the backdrop
+  $("#autoTitleBtn").addEventListener("click", () => titleSuggest().catch(fail));
+  $("#arcAdd").addEventListener("click", () => { readArcRows(); AM.data.arcs.push({ id: null, name: "", ko_raw: [], big: false, last_n: 0, last_chapter: null }); renderArcRows(); });
+  $("#arcSave").addEventListener("click", saveArcs);
+  $("#arcSeed").addEventListener("click", seedArcs);
+  $("#retransBtn").addEventListener("click", () => {
+    $$(".tabs button").find((b) => b.dataset.tab === "ai").click();
+    $("#retransBox").open = true; loadRetransModels();
+    $("#retransBox").scrollIntoView({ block: "nearest", behavior: "smooth" });
+  });
+  $("#retransBox").addEventListener("toggle", (e) => { if (e.target.open) loadRetransModels(); });
   $("#previewBtn").addEventListener("click", openPreview);
   $("#titleInput").addEventListener("input", () => setDirty(true));
 

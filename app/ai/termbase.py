@@ -243,8 +243,9 @@ class MockTermExtractor:
         self.model = model
 
     def call(self, *, system: str, user: str, schema: dict, **_) -> tuple[dict, dict, str]:
+        skip = user.split("</known_terms>")[0] if "</known_terms>" in user else ""    # the wattpad audit has no such block
         terms = [{"source": k, "target": v, "variants": [], "category": c}
-                 for k, (v, c) in self.KNOWN.items() if k in user and k not in user.split("</known_terms>")[0]]
+                 for k, (v, c) in self.KNOWN.items() if k in user and k not in skip]
         return {"terms": terms}, {"input_tokens": 1000, "output_tokens": 100}, "mock"
 
 
@@ -258,6 +259,12 @@ def _make_client(model: str):
     if MODELS.get(model, {}).get("provider") == "xai":
         from .grok import GrokJSON
         return GrokJSON(model, effort="low")
+    if MODELS.get(model, {}).get("provider") == "grok_cli":
+        from .grok_cli import GrokCLIJSON
+        return GrokCLIJSON(model, effort="low")
+    if MODELS.get(model, {}).get("provider") == "omniroute":
+        from .omniroute import OmniRouteJSON
+        return OmniRouteJSON(model, effort="low")
     if MODELS.get(model, {}).get("subscription"):
         from .claude_code import ClaudeCodeJSON
         return ClaudeCodeJSON(model, effort="low")

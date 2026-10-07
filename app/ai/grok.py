@@ -82,37 +82,50 @@ class GrokJSON:
         self.slug = slug_for(self.tier)
         self.client = openai.OpenAI(api_key=key, base_url=BASE_URL, timeout=900, max_retries=3)
 
+    label = "Grok"
+
+    def _formats(self, schema: dict) -> list:
+        return [{"type": "json_schema", "json_schema": {"name": "result", "schema": schema, "strict": True}},
+                {"type": "json_object"}]   # fallback for a model that rejects json_schema
+
+    def _can_fallback(self, e: Exception) -> bool:
+        return bool(re.search(r"response_format|json_schema|schema|structured", str(e), re.I))
+
+    def _map(self, e: Exception, refusal_message: str) -> LLMError:
+        return _map_error(e, refusal_message)
+
     def call(self, *, system: str, user: str, schema: dict, max_tokens: int = 64000,
              refusal_message: str = "Grok từ chối xử lý nội dung này") -> tuple[dict, dict, str]:
         o = self._sdk
         messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
-        formats = [{"type": "json_schema", "json_schema": {"name": "result", "schema": schema, "strict": True}},
-                   {"type": "json_object"}]   # fallback for a model that rejects json_schema
+        formats = self._formats(schema)
         resp = None
         for k, fmt in enumerate(formats):
             try:
-                resp = self.client.chat.completions.create(model=self.slug, messages=messages, response_format=fmt)
+                resp = self.client.chat.completions.create(model=self.slug, messages=messages,
+                                                           **({} if fmt is None else {"response_format": fmt}))
                 break
-            except o.BadRequestError as e:
-                if k + 1 < len(formats) and re.search(r"response_format|json_schema|schema|structured", str(e), re.I):
-                    log.info("json_schema rejected by %s, retrying with json_object", self.slug)
-                    messages[0] = {"role": "system", "content": system + "\nRespond with a single JSON object only, matching: "
+            except o.APIStatusError as e:
+                if k + 1 < len(formats) and e.status_code in (400, 422, 500) and self._can_fallback(e):
+                    log.info("response_format %s rejected by %s, retrying with %s", (fmt or {}).get("type"), self.slug,
+                             (formats[k + 1] or {}).get("type", "plain text"))
+                    messages[0] = {"role": "system", "content": system + chr(10) + "Respond with a single JSON object only, matching: "
                                    + json.dumps(schema)}
                     continue
-                raise _map_error(e, refusal_message)
+                raise self._map(e, refusal_message)
             except o.OpenAIError as e:
-                raise _map_error(e, refusal_message)
+                raise self._map(e, refusal_message)
         u = getattr(resp, "usage", None)
         cached = getattr(getattr(u, "prompt_tokens_details", None), "cached_tokens", 0) or 0
         usage = {"input_tokens": max((getattr(u, "prompt_tokens", 0) or 0) - cached, 0),
                  "output_tokens": getattr(u, "completion_tokens", 0) or 0, "cache_read_input_tokens": cached}
         if not resp.choices:
-            raise LLMEmptyResponse("Grok trả về phản hồi rỗng.", details={"usage": usage})
+            raise LLMEmptyResponse(f"{self.label} trả về phản hồi rỗng.", details={"usage": usage})
         choice = resp.choices[0]
         text = (choice.message.content or "").strip()
         if choice.finish_reason == "content_filter":
             from .novel_translator import LLMRefused
-            raise LLMRefused(f"{refusal_message} (bộ lọc nội dung của xAI).", details={"usage": usage})
+            raise LLMRefused(f"{refusal_message} (bộ lọc nội dung).", details={"usage": usage})
         if choice.finish_reason == "length":
             raise LLMEmptyResponse("Kết quả bị cắt (quá dài cho một lần gọi).", details={"usage": usage})
         text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text)
@@ -125,8 +138,8 @@ class GrokJSON:
             except json.JSONDecodeError:
                 data = None
         if not isinstance(data, dict):
-            raise LLMEmptyResponse("Grok trả về dữ liệu không đúng định dạng JSON.", details={"usage": usage})
-        log.info("grok ok: model=%s in=%s out=%s cached=%s", self.slug, usage["input_tokens"], usage["output_tokens"], cached)
+            raise LLMEmptyResponse(f"{self.label} trả về dữ liệu không đúng định dạng JSON.", details={"usage": usage})
+        log.info("%s ok: model=%s in=%s out=%s cached=%s", self.label.lower(), self.slug, usage["input_tokens"], usage["output_tokens"], cached)
         return data, usage, getattr(resp, "model", None) or self.slug
 
 
@@ -158,10 +171,55 @@ def _map_error(e: Exception, refusal_message: str) -> LLMError:
 
 
 # --------------------------------------------------------------------------- chapter translation
-def _problems(data: dict, n: int) -> str:
+def _split_loose_array(text: str) -> list[str]:
+    """Items of a JSON-looking array that is not valid JSON (unescaped quotes inside the items): cut at every
+    quote-comma-quote and decode the usual escapes by hand."""
+    inner = text.strip()
+    inner = inner[1:] if inner.startswith("[") else inner
+    inner = inner[:-1] if inner.endswith("]") else inner
+    inner = inner.strip()
+    inner = inner[1:] if inner.startswith('"') else inner
+    inner = inner[:-1] if inner.endswith('"') else inner
+    out = []
+    for part in re.split(r'"\s*,\s*"', inner):
+        try:
+            out.append(json.loads('"' + part + '"'))
+        except json.JSONDecodeError:
+            out.append(part.replace(chr(92) + '"', '"').replace(chr(92) + "n", chr(10)).replace(chr(92) * 2, chr(92)))
+    return out
+
+
+def _as_paragraphs(value) -> list[str]:
+    """`paragraphs` must be a list, but a model without strict JSON support (a gateway fallback) often returns it in
+    another shape: one long string with line breaks, a string that itself holds a JSON array ("[\"a\", \"b\"]"), or a
+    list of single characters (a string iterated per character). Counting those as paragraphs would trigger a pointless,
+    slow corrective retry (or fill the editor with one character per line), so turn them back into a list first."""
+    nl = chr(10)
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+    items = [str(v) for v in value if v is not None]
+    if len(items) > 20 and sum(len(i) <= 1 for i in items) > 0.8 * len(items):
+        items = ["".join(items)]          # a string that was iterated character by character: glue it back
+    if len(items) == 1:
+        text = items[0].strip()
+        if text.startswith("["):
+            try:
+                parsed = json.loads(text)
+                if isinstance(parsed, list):
+                    items = [str(x) for x in parsed if x is not None]
+            except json.JSONDecodeError:
+                items = _split_loose_array(text) or items      # e.g. dialogue quotes the model forgot to escape
+        if len(items) == 1 and nl in items[0]:
+            items = items[0].split(nl)
+    return [i.strip() for i in items if i.strip()]
+
+
+def _problems(data: dict, n: int, tolerance: float = 0.0) -> str:
     paras = data.get("paragraphs") or []
     issues = []
-    if len(paras) != n:
+    if abs(len(paras) - n) > round(n * tolerance):
         issues.append(f"Bạn trả về {len(paras)} đoạn nhưng đầu vào có {n} đoạn. Phải đúng {n} phần tử, mỗi đoạn gốc một phần tử, "
                       "không gộp/tách/bỏ đoạn.")
     joined = " ".join(str(p) for p in paras)
@@ -179,15 +237,16 @@ class GrokTranslator(GrokJSON):
         total: dict = {}
         best: Optional[tuple] = None
         fix = ""
-        for _ in range(2):   # Grok sometimes merges paragraphs or leaves Hangul: one corrective retry
+        for _ in range(getattr(self, "max_attempts", 2)):   # Grok sometimes merges paragraphs or leaves Hangul: one corrective retry
             data, usage, model = self.call(system=system, user=base + (f"\n\n<fix>\n{fix}\n</fix>" if fix else ""),
-                                           schema=SCHEMA, refusal_message="Grok từ chối dịch chương này")
+                                           schema=SCHEMA, refusal_message=f"{self.label} từ chối dịch chương này")
             for k, v in usage.items():
                 total[k] = total.get(k, 0) + v
+            data["paragraphs"] = _as_paragraphs(data.get("paragraphs"))
             if not data.get("paragraphs"):
                 fix = "Lần trước bạn trả về bản dịch rỗng. Hãy dịch đầy đủ chương."
                 continue
-            fix = _problems(data, len(paragraphs))
+            fix = _problems(data, len(paragraphs), getattr(self, "count_tolerance", 0.0))
             off = abs(len(data["paragraphs"]) - len(paragraphs))
             if best is None or not fix or off < best[2]:
                 best = (data, model, off)
@@ -195,8 +254,8 @@ class GrokTranslator(GrokJSON):
                 break
             log.info("grok retry (%s)", fix[:80])
         if best is None:
-            raise LLMEmptyResponse("Grok trả về bản dịch rỗng.", details={"usage": total})
+            raise LLMEmptyResponse(f"{self.label} trả về bản dịch rỗng.", details={"usage": total})
         data, model, _ = best
         return ChapterResult(heading=str(data.get("heading") or "").strip(), paragraphs=[str(p) for p in data["paragraphs"]],
                              new_terms=[t for t in data.get("new_terms", []) if isinstance(t, dict) and t.get("source") and t.get("target")],
-                             usage=total, model=f"grok:{model}")
+                             usage=total, model=model if ":" in model else f"{self.label.lower()}:{model}")

@@ -19,6 +19,7 @@ from ..document.models import Block
 from ..errors import ChapterError, DocxError, StateError
 from ..logging_setup import get_logger
 from ..storage.project_state import ProjectStore, content_hash, now_iso, store as default_store
+from . import arcs
 from .chapter_state import Status, transition
 from .validation import validate_translation
 
@@ -140,7 +141,7 @@ class ChapterService:
         fresh = rec is None or (rec.get("ko_choice"), rec.get("vi_choice")) != (ko_choice, vi_choice)
         if fresh:
             rec = {"number": number, "status": Status.LOADED.value, "draft": original,
-                   "title": default_title(number, content.vi_title), "exports": [], "publish_history": [],
+                   "title": arcs.assigned_title(pid, number) or default_title(number, content.vi_title), "exports": [], "publish_history": [],
                    "status_history": [], "created_at": now_iso()}
         elif rec.get("source_hash") != src_hash:
             if rec["status"] == Status.LOADED.value:

@@ -295,6 +295,8 @@ class AntigravityTranslator(AntigravityJSON):
                                            schema=SCHEMA, refusal_message="Gemini từ chối dịch chương này")
             for k, v in usage.items():
                 total[k] = total.get(k, 0) + v
+            from .grok import _as_paragraphs
+            data["paragraphs"] = _as_paragraphs(data.get("paragraphs"))
             if not data.get("paragraphs"):
                 fix = "Lần trước bạn trả về bản dịch rỗng. Hãy dịch đầy đủ chương."
                 continue

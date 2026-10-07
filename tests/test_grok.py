@@ -1,4 +1,5 @@
 """Grok (xAI): model wiring, structured call, error mapping, corrective retry."""
+import json
 from types import SimpleNamespace
 
 import httpx
@@ -116,3 +117,44 @@ def test_status_without_key(monkeypatch):
     monkeypatch.delenv("XAI_API_KEY", raising=False)
     st = grok.status(probe=True)
     assert st["has_key"] is False and st["models"] == []
+
+
+def test_paragraphs_returned_as_one_string_are_split_not_counted_as_characters(monkeypatch):
+    """A gateway fallback model may answer `paragraphs` as one long string: 116 paragraphs must not look like 9990."""
+    nl = chr(10)
+    as_string = dict(GOOD, paragraphs=nl.join(f"Đoạn số {i} khá dài để đếm ký tự." for i in range(40)))
+    seen = []
+    t = make(monkeypatch, [reply(json.dumps(as_string))], seen)
+    r = translate(t, paras=[f"p{i}" for i in range(40)])
+    assert len(r.paragraphs) == 40 and len(seen) == 1                 # no corrective retry
+    one_element = dict(GOOD, paragraphs=[nl.join(f"Đoạn {i}." for i in range(5))])
+    t = make(monkeypatch, [reply(json.dumps(one_element))], [])
+    assert len(translate(t, paras=[f"p{i}" for i in range(5)]).paragraphs) == 5
+
+
+def test_as_paragraphs_recovers_character_per_item_lists():
+    from app.ai.grok import _as_paragraphs
+    text = chr(10).join(f"Đoạn thứ {i} của chương." for i in range(30))
+    assert _as_paragraphs(list(text)) == text.split(chr(10))                 # the old bug: a string iterated per character
+    assert _as_paragraphs(["a", "b"]) == ["a", "b"] and _as_paragraphs(None) == [] and _as_paragraphs(5) == []
+
+
+def test_loose_json_array_with_unescaped_dialogue_quotes():
+    """What Claude sent through the gateway: a string holding an array that is not valid JSON."""
+    from app.ai.grok import _as_paragraphs
+    bad = '["「Một」", "Hắn nói xong rồi thôi.", ""Thưa Hạ đẳng." Cô cúi chào.", "Dòng 4.\nDòng 4b.", "2 / 2"]'
+    got = _as_paragraphs(bad)
+    assert got == ["「Một」", "Hắn nói xong rồi thôi.", '"Thưa Hạ đẳng." Cô cúi chào.', "Dòng 4.\nDòng 4b.", "2 / 2"]
+    good = '["a", "b", "c"]'
+    assert _as_paragraphs(good) == ["a", "b", "c"] and _as_paragraphs([good]) == ["a", "b", "c"]
+
+
+def test_count_tolerance_avoids_a_pointless_retry(monkeypatch):
+    seen = []
+    n = 60
+    short = dict(GOOD, paragraphs=[f"Đoạn {i}." for i in range(n - 2)])        # two merged paragraphs
+    t = make(monkeypatch, [reply(json.dumps(short)), reply(json.dumps(short))], seen)
+    t.count_tolerance = 0.05
+    assert len(translate(t, paras=[f"p{i}" for i in range(n)]).paragraphs) == n - 2 and len(seen) == 1
+    t2 = make(monkeypatch, [reply(json.dumps(short)), reply(json.dumps(dict(GOOD, paragraphs=[f"Đoạn {i}." for i in range(n)])))], [])
+    assert len(translate(t2, paras=[f"p{i}" for i in range(n)]).paragraphs) == n          # strict by default: retried

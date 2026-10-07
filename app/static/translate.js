@@ -123,12 +123,68 @@ async function checkGrok(refresh = false) {
   renderAuth();
 }
 
+// Grok CLI (`grok` headless): installed? signed in to grok.com?
+function grokCliNote(g) {
+  if (!g.installed) {
+    return `<div class="alert error">Chưa cài Grok CLI (<code>grok</code>). Mở <b>PowerShell</b> và chạy
+      <code>${esc(g.install_cmd || "irm https://x.ai/cli/install.ps1 | iex")}</code>, sau đó chạy <code>grok</code> một lần để đăng nhập grok.com,
+      rồi <button class="btn small" id="trGcRecheck">Kiểm tra lại</button></div>`;
+  }
+  if (!g.checked) return `<div class="alert">Đang kiểm tra Grok CLI…</div>`;
+  if (!g.logged_in) {
+    return `<div class="alert error">Grok CLI chưa sẵn sàng${g.error ? `: ${esc(g.error)}` : ""}
+      <button class="btn small" id="trGcRecheck">Kiểm tra lại</button></div>`;
+  }
+  const accs = g.accounts || [];
+  const accLine = accs.length > 1
+    ? `<br>Tài khoản (xoay vòng, tự chuyển khi bị giới hạn): ${accs.map((a) => `<b>${esc(a.name)}</b> ${a.logged_in ? "✔" : `✖ <span class="muted">(${esc(a.error || "chưa đăng nhập")})</span>`}`).join(" · ")}`
+    : "";
+  return `<div class="alert">✔ Dịch bằng <b>Grok CLI</b> (${esc((g.models || []).join(", ") || "model mặc định")}) — dùng tài khoản grok.com đã đăng nhập,
+    không cần API key. Grok dịch được cảnh 18+. Đổi model bằng <code>GROK_CLI_MODEL</code>; thêm tài khoản bằng <code>GROK_CLI_HOMES</code> trong <code>.env</code>.
+    Hết hạn mức thì job tự tạm dừng; bấm Tiếp tục khi được làm mới.${accLine}</div>`;
+}
+
+async function checkGrokCli(refresh = false) {
+  T.info.grok_cli = { ...(T.info.grok_cli || {}), checked: false };
+  renderAuth();
+  try { T.info.grok_cli = await api("GET", `/api/translate/grok-cli${refresh ? "?refresh=1" : ""}`); }
+  catch (e) { T.info.grok_cli = { ...(T.info.grok_cli || {}), checked: true, logged_in: false, error: e.message }; }
+  renderAuth();
+}
+
+// OmniRoute (local OpenAI-compatible gateway): key set? reachable? does OMNIROUTE_MODEL exist?
+function omniNote(o) {
+  if (!o.has_key) {
+    return `<div class="alert error">Cần <b>OMNIROUTE_API_KEY</b> (và <b>OMNIROUTE_MODEL</b>) trong <code>.env</code>: tạo API key trong dashboard OmniRoute
+      (<code>${esc((o.base_url || "http://localhost:20128/v1").replace(/[/]v1$/, ""))}</code>) rồi dán vào .env và khởi động lại tool.</div>`;
+  }
+  const list = o.models?.length ? ` Model có sẵn: <code>${esc(o.models.slice(0, 40).join(", "))}${o.models.length > 40 ? ", …" : ""}</code>` : "";
+  if (o.checked && o.error) {
+    return `<div class="alert error">${esc(o.error)}${list} <button class="btn small" id="trOmRecheck">Kiểm tra lại</button></div>`;
+  }
+  if (!o.model) return `<div class="alert error">Chưa đặt <b>OMNIROUTE_MODEL</b> trong <code>.env</code>.${list}</div>`;
+  return `<div class="alert">✔ Dịch bằng <b>OmniRoute</b> (<code>${esc(o.model)}</code>) qua <code>${esc(o.base_url)}</code> — chi phí / hạn mức tính theo nhà cung cấp
+    bạn đã nối trong OmniRoute. ${o.checked ? "" : `<button class="btn small" id="trOmRecheck">Kiểm tra kết nối</button>`}</div>`;
+}
+
+async function checkOmniroute(refresh = false) {
+  try { T.info.omniroute = { ...(T.info.omniroute || {}), ...await api("GET", `/api/translate/omniroute${refresh ? "?refresh=1" : ""}`) }; }
+  catch (e) { T.info.omniroute = { ...(T.info.omniroute || {}), checked: true, error: e.message }; }
+  renderAuth();
+}
+
 // Which way of calling the AI is ready: API key (billed per token), Claude Code or Antigravity (subscription / quota).
 function renderAuth() {
   const i = T.info, cc = i.claude_code || {};
   const m = curModel(), sub = m.subscription;
   if (i.provider === "mock") {
     $("#trKeyWarn").innerHTML = `<div class="alert">Đang ở chế độ thử (TRANSLATE_PROVIDER=mock): không gọi Claude, bản dịch là văn bản giả.</div>`;
+  } else if (m.provider === "omniroute") {
+    $("#trKeyWarn").innerHTML = omniNote(i.omniroute || {});
+    $("#trOmRecheck")?.addEventListener("click", () => checkOmniroute(true));
+  } else if (m.provider === "grok_cli") {
+    $("#trKeyWarn").innerHTML = grokCliNote(i.grok_cli || {});
+    $("#trGcRecheck")?.addEventListener("click", () => checkGrokCli(true));
   } else if (m.provider === "xai") {
     $("#trKeyWarn").innerHTML = grokNote(i.grok || {}, m.id.split(":")[1]);
     $("#trGkRecheck")?.addEventListener("click", () => checkGrok(true));
@@ -144,7 +200,7 @@ function renderAuth() {
           ${cc.installed ? "(đăng nhập bằng tài khoản Claude có gói Pro/Max)" : "rồi <code>claude auth login --claudeai</code>"}, sau đó bấm lại model này.</div>`;
   } else {
     $("#trKeyWarn").innerHTML = i.has_key ? "" : `<div class="alert error">Model này tính tiền API: cần <b>ANTHROPIC_API_KEY</b> trong <code>.env</code>
-      (console.anthropic.com). Hoặc chọn <b>Claude Code · …</b> (gói Claude) <b>Antigravity · …</b> (Gemini) hay <b>Grok</b> (XAI_API_KEY).</div>`;
+      (console.anthropic.com). Hoặc chọn <b>Claude Code · …</b> (gói Claude) <b>Antigravity · …</b> (Gemini) hay <b>Grok</b> (XAI_API_KEY hoặc Grok CLI) hay <b>OmniRoute</b>.</div>`;
   }
 }
 
@@ -154,6 +210,16 @@ function updateCost() {
   const chars = chs.reduce((s, c) => s + c.chars, 0);
   const m = T.info.models.find((x) => x.id === $("#trModel").value);
   renderAuth();
+  if (m.provider === "omniroute") {
+    $("#trCost").innerHTML = `${chs.length} chương · <b>chi phí tính theo nhà cung cấp trong OmniRoute</b> <span class="muted">(tool không ước tính được)</span>`;
+    $("#trStart").disabled = !chs.length || T.info.omniroute?.has_key === false;
+    return;
+  }
+  if (m.provider === "grok_cli") {
+    $("#trCost").innerHTML = `${chs.length} chương · <b>dùng tài khoản grok.com trong Grok CLI</b> <span class="muted">(không tính tiền API; mỗi chương là một lượt dài)</span>`;
+    $("#trStart").disabled = !chs.length || T.info.grok_cli?.installed === false;
+    return;
+  }
   if (m.provider === "antigravity") {
     $("#trCost").innerHTML = `${chs.length} chương · <b>dùng hạn mức Gemini của Antigravity</b> <span class="muted">(không tính tiền API;
       mỗi chương là một lượt dài)</span>`;
@@ -185,7 +251,9 @@ async function start() {
   const chs = selectedChapters();
   const model = $("#trModel").selectedOptions[0].textContent;
   const m = curModel();
-  if (!confirm(`Dịch ${chs.length} chương bằng ${model}?\n${$("#trCost").innerText}\n\n${m.provider === "antigravity"
+  if (!confirm(`Dịch ${chs.length} chương bằng ${model}?\n${$("#trCost").innerText}\n\n${m.provider === "omniroute" ? "Sẽ gọi OmniRoute — chi phí tính theo các nhà cung cấp bạn đã nối trong đó."
+    : m.provider === "grok_cli" ? "Sẽ dùng tài khoản grok.com đăng nhập trong Grok CLI — không tính tiền API."
+    : m.provider === "antigravity"
     ? "Sẽ dùng hạn mức Gemini của tài khoản Google trong Antigravity — không tính tiền API."
     : m.provider === "xai" ? "Chi phí API sẽ tính vào tài khoản xAI (Grok) của bạn."
     : m.subscription ? "Sẽ dùng lượt của gói Claude (Claude Code) — không tính tiền API."
@@ -292,10 +360,14 @@ $("#trModel").addEventListener("change", async () => {   // re-check the CLI log
   const m = curModel();
   if (m.provider === "antigravity") {
     if (!T.info.antigravity?.checked) await checkAntigravity();
+  } else if (m.provider === "omniroute") {
+    await checkOmniroute();
+  } else if (m.provider === "grok_cli") {
+    if (!T.info.grok_cli?.checked) await checkGrokCli();
   } else if (m.provider === "xai") {
     await checkGrok();
   } else if (m.subscription) {
-    try { T.info = { ...await api("GET", "/api/translate/info"), grok: T.info.grok, antigravity: T.info.antigravity }; } catch { /* keep old */ }
+    try { T.info = { ...await api("GET", "/api/translate/info"), grok: T.info.grok, grok_cli: T.info.grok_cli, omniroute: T.info.omniroute, antigravity: T.info.antigravity }; } catch { /* keep old */ }
   }
   renderAuth(); updateCost();
 });

@@ -1,6 +1,7 @@
 """HTTP API. Thin layer: validation + delegation to services."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -11,6 +12,7 @@ from pydantic import BaseModel, Field
 from . import config
 from .ai.correction_service import ai_status, suggest_correction
 from .document.models import Block
+from .editor import arcs
 from .editor.chapter_editor import service
 from .editor.glossary import GlossaryEntry
 from .editor.validation import validate_translation
@@ -150,6 +152,83 @@ def suggest(pid: str, number: int, req: SuggestReq):
                               instruction=req.instruction)
 
 
+# --- automatic chapter titles by story arc (see app/editor/arcs.py) -----------------------
+class ArcIn(BaseModel):
+    id: Optional[str] = None
+    name: str = Field(max_length=200)
+    ko: list[str] = Field(default_factory=list, max_length=20)
+    big: bool = False
+    notes: str = Field("", max_length=2000)
+    last_n: Optional[int] = Field(None, ge=0, le=100000)
+
+
+class ArcsReq(BaseModel):
+    arcs: list[ArcIn] = Field(max_length=300)
+    template: Optional[str] = Field(None, max_length=200)
+
+
+class TitleReq(BaseModel):
+    arc_id: Optional[str] = None
+    new_name: str = Field("", max_length=200)
+
+
+@router.get("/projects/{pid}/arcs")
+def get_arcs(pid: str):
+    store.get_project(pid)
+    return arcs.view(pid)
+
+
+@router.put("/projects/{pid}/arcs")
+def put_arcs(pid: str, req: ArcsReq):
+    store.get_project(pid)
+    return arcs.update(pid, [a.model_dump() for a in req.arcs], req.template)
+
+
+@router.post("/projects/{pid}/arcs/seed")
+def seed_arcs(pid: str):
+    store.get_project(pid)
+    return arcs.seed(pid)
+
+
+@router.post("/projects/{pid}/chapters/{number}/title/suggest")
+def suggest_title(pid: str, number: int, req: TitleReq):
+    store.get_project(pid)
+    return arcs.suggest(pid, number, arc_id=req.arc_id, new_name=req.new_name)
+
+
+@router.post("/projects/{pid}/chapters/{number}/title/apply")
+def apply_title(pid: str, number: int, req: TitleReq):
+    store.get_project(pid)
+    return arcs.apply(pid, number, arc_id=req.arc_id, new_name=req.new_name)
+
+
+class ArcNameReq(BaseModel):
+    ko: str = Field(min_length=1, max_length=200)
+    model: str = "claude-opus-5-5"
+
+
+@router.post("/projects/{pid}/arcs/translate-name")
+def translate_arc_name(pid: str, req: ArcNameReq):
+    store.get_project(pid)
+    return {"name": arcs.translate_name(pid, req.ko, req.model)}
+
+
+class RetranslateReq(BaseModel):
+    model: str = "claude-opus-5-5"
+    effort: str = Field("medium", pattern="^(low|medium|high|xhigh|max)$")
+    instruction: str = Field("", max_length=1000)
+    auto_fix: bool = True
+    parallel: int = Field(1, ge=1, le=4)
+
+
+@router.post("/projects/{pid}/chapters/{number}/retranslate")
+def retranslate(pid: str, number: int, req: RetranslateReq):
+    """Translate the whole chapter again from the Korean source. Returns the result only — the UI applies it."""
+    from .ai.retranslate import retranslate_chapter
+    return retranslate_chapter(pid, number, model=req.model, effort=req.effort, instruction=req.instruction,
+                                auto_fix=req.auto_fix, parallel=req.parallel)
+
+
 # --- Wattpad ------------------------------------------------------------------
 class PublishReq(BaseModel):
     story_id: str = Field(min_length=1, max_length=40, pattern=r"^\d+$")
@@ -265,6 +344,37 @@ class ExtStories(BaseModel):
     page_url: str = ""
 
 
+class ExtScanChunk(BaseModel):
+    parts: list[dict] = Field(default_factory=list, max_length=100)
+
+
+class ExtScanEvent(BaseModel):
+    message: Optional[str] = Field(None, max_length=300)
+    story_done: bool = False
+    error: Optional[str] = Field(None, max_length=300)
+    done: bool = False
+    tab: Optional[str] = Field(None, max_length=40)
+
+
+@ext.get("/scan")
+def ext_scan(tab: str = ""):
+    from .ai.wattpad_terms import wattpad_scan
+    publish_service.publisher.bridge.touch()
+    return {"task": wattpad_scan.task_for_extension(tab[:40])}
+
+
+@ext.post("/scan/{task_id}/chunk")
+def ext_scan_chunk(task_id: str, req: ExtScanChunk):
+    from .ai.wattpad_terms import wattpad_scan
+    return wattpad_scan.ingest(task_id, req.parts)
+
+
+@ext.post("/scan/{task_id}/event")
+def ext_scan_event(task_id: str, req: ExtScanEvent):
+    from .ai.wattpad_terms import wattpad_scan
+    return wattpad_scan.event(task_id, req.model_dump(exclude_none=True))
+
+
 @ext.get("/config")
 def ext_config():
     return publish_service.publisher.bridge.ext_config()
@@ -327,12 +437,14 @@ class TranslateJobReq(BaseModel):
 def translate_info():
     from .ai import novel_translator as nt
     import os
-    from .ai import antigravity, claude_code, grok
+    from .ai import antigravity, claude_code, grok, grok_cli, omniroute
     return {"models": [{"id": k, "label": v["label"], "price": v["price"], "subscription": bool(v.get("subscription")),
                         "provider": v.get("provider", "api")} for k, v in nt.MODELS.items()],
             "claude_code": claude_code.status(),
             "antigravity": antigravity.status(),
             "grok": grok.status(),
+            "grok_cli": grok_cli.status(),
+            "omniroute": omniroute.status(),
             "default_model": nt.DEFAULT_MODEL, "style": tj().get_style(), "default_style": nt.DEFAULT_STYLE,
             "provider": os.getenv("TRANSLATE_PROVIDER", "anthropic"),
             "has_key": bool(os.getenv("ANTHROPIC_API_KEY", "").strip())}
@@ -352,6 +464,20 @@ def translate_grok(refresh: bool = False):
     """Lists the Grok models the XAI_API_KEY can use (GET /v1/models) and the slugs the tool will pick."""
     from .ai import grok
     return grok.status(probe=True, force=refresh)
+
+
+@router.get("/translate/omniroute")
+def translate_omniroute(refresh: bool = False):
+    """Asks the OmniRoute gateway for its model list: is the key valid and does OMNIROUTE_MODEL exist?"""
+    from .ai import omniroute
+    return omniroute.status(probe=True, force=refresh)
+
+
+@router.get("/translate/grok-cli")
+def translate_grok_cli(refresh: bool = False):
+    """Runs `grok models`: is the CLI installed and signed in, and which models it offers."""
+    from .ai import grok_cli
+    return grok_cli.status(probe=True, force=refresh)
 
 
 def tj():
@@ -522,6 +648,34 @@ def termbase_scan(pid: str, req: ScanReq):
 @router.post("/projects/{pid}/termbase/scan/cancel")
 def termbase_scan_cancel(pid: str):
     return tb().scanner.cancel(pid)
+
+
+class WattpadScanReq(BaseModel):
+    stories: list[dict] = Field(min_length=1, max_length=40)
+    from_number: Optional[int] = None
+    to_number: Optional[int] = None
+    korean_path: str = Field(max_length=500)
+    model: str = "claude-opus-5-5"
+
+
+@router.get("/projects/{pid}/termbase/wattpad-scan")
+def wattpad_scan_state(pid: str):
+    from .ai.wattpad_terms import wattpad_scan
+    return {**wattpad_scan.state(pid), "extension_connected": publish_service.publisher.bridge.connected()}
+
+
+@router.post("/projects/{pid}/termbase/wattpad-scan")
+def wattpad_scan_start(pid: str, req: WattpadScanReq):
+    from .ai.wattpad_terms import wattpad_scan
+    stories = [{"id": str(s["id"]), "title": str(s.get("title", ""))[:200]} for s in req.stories if re.fullmatch(r"\d{1,15}", str(s.get("id", "")))]
+    return wattpad_scan.start(pid, stories=stories, from_number=req.from_number, to_number=req.to_number,
+                              korean_path=req.korean_path, model=req.model)
+
+
+@router.post("/projects/{pid}/termbase/wattpad-scan/cancel")
+def wattpad_scan_cancel(pid: str):
+    from .ai.wattpad_terms import wattpad_scan
+    return wattpad_scan.cancel(pid)
 
 
 @router.post("/projects/{pid}/termbase/proposals")

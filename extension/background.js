@@ -25,6 +25,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       case "config": return call("/api/ext/config");
       case "task": return call("/api/ext/task?tab=" + encodeURIComponent(msg.tab || ""));
       case "event": return call(`/api/ext/task/${encodeURIComponent(msg.id)}/event`, "POST", msg.data);
+      case "scan": return call("/api/ext/scan?tab=" + encodeURIComponent(msg.tab || ""));
+      case "scan_chunk": return call(`/api/ext/scan/${encodeURIComponent(msg.id)}/chunk`, "POST", msg.data);
+      case "scan_event": return call(`/api/ext/scan/${encodeURIComponent(msg.id)}/event`, "POST", msg.data);
       case "stories": return call("/api/ext/stories", "POST", msg.data);
       case "diag": return call("/api/ext/diag", "POST", msg.data);
       case "getApp": return { app: await appBase() };

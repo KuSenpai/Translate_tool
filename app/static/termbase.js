@@ -21,7 +21,10 @@ function toast(msg, kind = "") {
 }
 const fail = (e) => toast(`${e.code ? `[${e.code}] ` : ""}${e.message}`, "error");
 const usd = (n) => `$${Number(n || 0).toFixed(2)}`;
-const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } } };
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch { /* storage unavailable */ } },
+};
 
 async function showView() {
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("hidden", v.id !== "viewTerms"));
@@ -51,6 +54,7 @@ async function load(pid) {
   }
   renderStory();
   renderScan(); renderProposals(); renderTable(); estimate();
+  loadWattpadCard();
 }
 
 function renderStory() {
@@ -101,7 +105,9 @@ async function estimate() {
     B.est = e;
     const m = B.models.find((x) => x.id === $("#tbModel").value) || {};
     $("#tbEstimate").textContent = `${e.chapters} chương song ngữ · ${e.batches} lượt gọi · ` +
-      (m.provider === "antigravity" ? "dùng hạn mức Gemini của Antigravity (không tính tiền API)"
+      (m.provider === "omniroute" ? "gọi qua OmniRoute (chi phí tính theo nhà cung cấp trong đó)"
+      : m.provider === "grok_cli" ? "dùng tài khoản grok.com trong Grok CLI (không tính tiền API)"
+      : m.provider === "antigravity" ? "dùng hạn mức Gemini của Antigravity (không tính tiền API)"
         : m.subscription ? "dùng lượt của gói Claude (không tính tiền API)" : `ước tính ~${usd(e.estimate[$("#tbModel").value])}`);
     $("#tbScan").disabled = !e.chapters;
   } catch (err) { $("#tbEstimate").textContent = err.message; }
@@ -135,6 +141,58 @@ function renderScan() {
   if (s.running) { clearTimeout(B.poll); B.poll = setTimeout(pollScan, 2000); }
 }
 
+// ---------------------------------------------------------------- 3b. old chapters on Wattpad
+const W = { poll: null, stories: [] };
+async function loadWattpadCard() {
+  $("#wsKo").value = store.get("ws:ko") || $("#wsKo").value;
+  try {
+    const st = await api("GET", "/api/wattpad/status");
+    W.stories = st.stories || [];
+  } catch { W.stories = []; }
+  const saved = new Set((store.get("ws:stories") || "").split(",").filter(Boolean));
+  $("#wsStories").innerHTML = W.stories.length
+    ? `<b>Truyện Wattpad:</b> ${W.stories.map((s) => `<label class="check" style="margin-right:12px"><input type="checkbox" class="wsStory" value="${esc(s.id)}"
+        ${saved.size ? (saved.has(s.id) ? "checked" : "") : "checked"}> ${esc(s.title)}</label>`).join("")}`
+    : `<span class="muted">Chưa có danh sách truyện — mở trang My Works trên Wattpad (extension sẽ gửi về), hoặc thêm truyện ở màn hình Đăng.</span>`;
+  await pollWattpad(false);
+}
+async function pollWattpad(keep = true) {
+  clearTimeout(W.poll);
+  if (!B.pid) return;
+  try {
+    const s = await api("GET", `/api/projects/${B.pid}/termbase/wattpad-scan`);
+    renderWattpad(s);
+    if (s.active && !$("#viewTerms").classList.contains("hidden")) W.poll = setTimeout(pollWattpad, 2000);
+    else if (keep && s.status === "done") load(B.pid);       // new proposals
+  } catch (e) { $("#wsState").innerHTML = `<div class="alert error">${esc(e.message)}</div>`; }
+}
+function renderWattpad(s) {
+  $("#wsStart").classList.toggle("hidden", !!s.active);
+  $("#wsStop").classList.toggle("hidden", !s.active);
+  if (!s.status) { $("#wsState").innerHTML = ""; return; }
+  const phase = s.status === "fetching" ? `đọc chương ${s.fetched || 0}` : s.status === "scanning" ? `so thuật ngữ ${s.batches_done || 0}/${s.batches_total || "?"}` : "";
+  const warn = s.active && s.status === "fetching" && !s.extension_connected
+    ? `<div class="alert error">Chưa thấy extension kết nối. Cài / tải lại extension (v1.3.0) trong <code>edge://extensions</code>, bật VPN và mở một tab wattpad.com.</div>` : "";
+  $("#wsState").innerHTML = `${warn}${s.active ? "⏳" : s.status === "done" ? "✔" : "•"} ${esc(s.message || "")}${phase ? ` · ${phase}` : ""}
+    ${s.arcs ? ` · số arc đã cập nhật từ ${s.arcs.chapters} tiêu đề` : ""} · đã tốn ${usd(s.cost_usd)}
+    ${(s.errors || []).length ? `<div class="alert error"><ul>${s.errors.slice(-5).map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>` : ""}`;
+}
+async function startWattpad() {
+  const ids = [...document.querySelectorAll(".wsStory:checked")].map((c) => c.value);
+  const stories = W.stories.filter((s) => ids.includes(s.id));
+  if (!stories.length) return toast("Chưa chọn truyện Wattpad nào.", "error");
+  const ko = $("#wsKo").value.trim();
+  if (!ko) return toast("Hãy nhập đường dẫn file Hàn gốc.", "error");
+  store.set("ws:ko", ko); store.set("ws:stories", ids.join(","));
+  try {
+    const s = await api("POST", `/api/projects/${B.pid}/termbase/wattpad-scan`, {
+      stories, korean_path: ko, model: $("#tbModel").value,
+      from_number: $("#wsFrom").value ? +$("#wsFrom").value : null, to_number: $("#wsTo").value ? +$("#wsTo").value : null,
+    });
+    renderWattpad(s); pollWattpad();
+  } catch (e) { fail(e); }
+}
+
 // ---------------------------------------------------------------- 4. proposals
 function catSelect(value, attrs = "") {
   const cats = B.data?.categories || {};
@@ -149,8 +207,8 @@ function renderProposals() {
       <th>Cách dịch khác đã gặp</th><th>Nguồn</th></tr></thead><tbody>${props.map((p) => `<tr data-src="${esc(p.source)}">
       <td><input type="checkbox" class="sel" checked></td><td class="ko">${esc(p.source)}</td>
       <td><input type="text" class="tgt" value="${esc(p.target)}"></td><td>${catSelect(p.category, 'class="cat"')}</td>
-      <td>${p.variants?.length ? `<span style="color:#c07a00">${esc(p.variants.join(" · "))}</span>` : `<span class="muted">—</span>`}</td>
-      <td class="muted">${p.origin === "translation" ? "khi dịch" : "quét"}${p.chapters?.length ? ` · ${p.chapters.length} chương` : ""}</td></tr>`).join("")}
+      <td>${p.current ? `<span class="muted">hiện tại:</span> <b>${esc(p.current)}</b>` : ""}${p.variants?.filter((v) => v !== p.current).length ? ` <span style="color:#c07a00">${esc(p.variants.filter((v) => v !== p.current).join(" · "))}</span>` : (p.current ? "" : `<span class="muted">—</span>`)}</td>
+      <td class="muted">${p.origin === "wattpad-old" ? "chương cũ Wattpad" : p.origin === "translation" ? "khi dịch" : "quét"}${p.chapters?.length ? ` · ${p.chapters.length} chương` : ""}</td></tr>`).join("")}
     </tbody></table></div>`;
   $("#tbPropAll").addEventListener("change", (e) => $("#tbProps").querySelectorAll(".sel").forEach((c) => { c.checked = e.target.checked; }));
 }
@@ -249,6 +307,8 @@ $("#tbImport").addEventListener("click", importData);
 $("#tbNotesSave").addEventListener("click", saveNotes);
 for (const id of ["#tbFrom", "#tbTo", "#tbModel"]) $(id).addEventListener("change", estimate);
 $("#tbScan").addEventListener("click", startScan);
+$("#wsStart").addEventListener("click", startWattpad);
+$("#wsStop").addEventListener("click", async () => { try { renderWattpad(await api("POST", `/api/projects/${B.pid}/termbase/wattpad-scan/cancel`)); } catch (e) { fail(e); } });
 $("#tbScanStop").addEventListener("click", async () => { try { await api("POST", `/api/projects/${B.pid}/termbase/scan/cancel`); toast("Sẽ dừng sau lượt hiện tại"); } catch (e) { fail(e); } });
 $("#tbAcceptSel").addEventListener("click", () => decide(true));
 $("#tbRejectSel").addEventListener("click", () => decide(false));

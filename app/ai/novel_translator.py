@@ -144,6 +144,13 @@ MODELS = {
                   "effort": False, "fallbacks": False, "provider": "xai", "tier": "best"},
     "grok:fast": {"label": "Grok (xAI) · rẻ — dịch được truyện 18+, rẻ hơn ~2 lần", "price": (1.25, 2.5, 0.20),
                   "effort": False, "fallbacks": False, "provider": "xai", "tier": "fast"},
+    # Through the local Grok Build CLI (`grok`): the grok.com account signed in there, no API key.
+    "grok-cli:default": {"label": "Grok CLI — dùng tài khoản grok.com đã đăng nhập, dịch được truyện 18+",
+                         "price": (0.0, 0.0, 0.0), "effort": True, "fallbacks": False, "subscription": True,
+                         "provider": "grok_cli"},
+    # Through OmniRoute (local gateway, OpenAI-compatible): the model / combo is OMNIROUTE_MODEL in .env.
+    "omniroute:default": {"label": "OmniRoute — cổng AI cục bộ (model/combo đặt ở OMNIROUTE_MODEL trong .env)",
+                          "price": (0.0, 0.0, 0.0), "effort": False, "fallbacks": False, "provider": "omniroute"},
 }
 DEFAULT_MODEL = "claude-opus-5-5"
 
@@ -326,6 +333,12 @@ def make_translator(model: str, effort: str):
     if MODELS.get(model, {}).get("provider") == "xai":
         from .grok import GrokTranslator
         return GrokTranslator(model, effort)
+    if MODELS.get(model, {}).get("provider") == "grok_cli":
+        from .grok_cli import GrokCLITranslator
+        return GrokCLITranslator(model, effort)
+    if MODELS.get(model, {}).get("provider") == "omniroute":
+        from .omniroute import OmniRouteTranslator
+        return OmniRouteTranslator(model, effort)
     if MODELS.get(model, {}).get("subscription"):
         from .claude_code import ClaudeCodeJSON
 

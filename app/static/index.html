@@ -118,9 +118,11 @@
   <div class="editor-head">
     <button class="ghost" id="backHome">← Chương</button>
     <input id="titleInput" class="title-input" placeholder="Tiêu đề chương">
+    <button id="autoTitleBtn" class="ai" title="Đặt tiêu đề theo arc: Số chương. Tên arc (số thứ tự)">🏷 Tự đặt tiêu đề</button>
     <span class="badge" id="statusBadge"></span>
     <span class="dirty hidden" id="dirtyMark">● chưa lưu</span>
   </div>
+  <div id="titleStrip" class="alert hidden"></div>
   <div class="toolbar">
     <button id="saveBtn" class="primary" title="Ctrl+S">💾 Save Draft</button>
     <button id="undoBtn" title="Ctrl+Z">↶ Undo</button>
@@ -130,9 +132,38 @@
     <button id="boldBtn" title="In đậm (Ctrl+B)"><b>B</b></button>
     <button id="italicBtn" title="In nghiêng (Ctrl+I)"><i>I</i></button>
     <span class="sep"></span>
-    <button id="suggestBtn" class="ai" title="Chọn một đoạn văn bản trong bản Việt rồi bấm">✨ Suggest correction</button>
+    <label class="small lh-ctl" title="Khoảng cách giữa các dòng — chỉ đổi cách hiển thị khi sửa, không ảnh hưởng file Word / bản đăng">↕ Giãn dòng
+      <select id="lineHeight">
+        <option value="1.2">1.2</option><option value="1.5">1.5</option><option value="1.75">1.75 (mặc định)</option>
+        <option value="2">2.0</option><option value="2.5">2.5</option><option value="3">3.0</option>
+      </select>
+    </label>
+    <span class="sep"></span>
+    <button id="findBtn" title="Tìm kiếm (Ctrl+F) / Thay thế (Ctrl+H)">🔍 Tìm / Thay</button>
+    <span class="sep"></span>
+    <button id="suggestBtn" class="ai"title="Chọn một đoạn văn bản trong bản Việt rồi bấm">✨ Suggest correction</button>
+    <button id="retransBtn" class="ai" title="Dịch lại cả chương từ bản Hàn bằng AI">🔁 Dịch lại chương</button>
     <span class="spacer"></span>
     <button id="previewBtn" class="primary">Preview →</button>
+  </div>
+  <div class="findbar hidden" id="findBar">
+    <div class="row">
+      <input id="findInput" placeholder="Tìm trong bản Việt…" autocomplete="off" spellcheck="false">
+      <span class="muted small find-count" id="findCount"></span>
+      <button class="small" id="findPrev" title="Kết quả trước (Shift+Enter)">↑</button>
+      <button class="small" id="findNext" title="Kết quả sau (Enter)">↓</button>
+      <label class="check small"><input type="checkbox" id="findCase"> Aa</label>
+      <label class="check small" title="Chỉ khớp nguyên từ"><input type="checkbox" id="findWord"> Nguyên từ</label>
+      <label class="check small" title="Biểu thức chính quy (JS)"><input type="checkbox" id="findRegex"> Regex</label>
+      <span class="spacer"></span>
+      <button class="small ghost" id="findClose" title="Đóng (Esc)">✕</button>
+    </div>
+    <div class="row">
+      <input id="replaceInput" placeholder="Thay bằng…" autocomplete="off" spellcheck="false">
+      <button class="small" id="replaceOne">Thay</button>
+      <button class="small" id="replaceAll">Thay tất cả</button>
+      <span class="muted small" id="replaceMsg"></span>
+    </div>
   </div>
   <div id="chapterWarnings"></div>
   <div class="variant-row hidden" id="variantRow"></div>
@@ -145,6 +176,7 @@
     <div class="pane">
       <div class="pane-head">Vietnamese Translation <span class="muted small" id="viMeta"></span></div>
       <div class="pane-body vi" id="viEditor" contenteditable="true" spellcheck="false"></div>
+      <div class="pane-foot" id="wordCount" title="Đếm theo bản Việt đang sửa (bôi đen để đếm riêng đoạn chọn)"></div>
       <div class="lock-overlay hidden" id="lockOverlay">
         <div>
           <p><b>⚠ Parser không chắc chắn về ranh giới chương này.</b></p>
@@ -165,6 +197,24 @@
         </label>
         <div id="aiResult" class="muted small">Chọn (bôi đen) một đoạn trong bản Việt rồi bấm <b>✨ Suggest correction</b>.
           AI chỉ gợi ý — bạn quyết định có Apply hay không.</div>
+        <details class="retrans" id="retransBox">
+          <summary><b>🔁 Dịch lại cả chương bằng AI</b></summary>
+          <p class="small muted">Dịch lại từ bản Hàn của chương này (kèm glossary, ghi chú truyện và đoạn cuối chương trước). Kết quả chỉ để xem —
+            bạn bấm <b>Áp dụng</b> mới thay bản đang sửa (Undo được). Chương bị AI khác từ chối (18+) thì thử model Grok.</p>
+          <label class="small">Model <select id="rtModel"></select></label>
+          <label class="small">Mức suy luận
+            <select id="rtEffort"><option value="low">low</option><option value="medium" selected>medium</option><option value="high">high</option></select>
+          </label>
+          <label class="small">Yêu cầu riêng cho lần dịch này (tuỳ chọn)
+            <input id="rtInstruction" placeholder="vd: xưng hô anh–em, văn phong mượt hơn">
+          </label>
+          <label class="small" title="Chia chương thành vài phần dịch cùng lúc: nhanh gần gấp N lần, tốn thêm một chút chi phí cố định cho mỗi phần. Chỉ áp dụng cho chương từ 30 đoạn.">Dịch song song
+            <select id="rtParallel"><option value="1">1 — không chia</option><option value="2">2 phần</option><option value="3" selected>3 phần</option><option value="4">4 phần</option></select>
+          </label>
+          <label class="check small" title="Nếu bản dịch vi phạm glossary (dùng từ bị cấm, sót chữ Hàn…), tự dịch lại thêm một lần kèm danh sách lỗi. Chậm và tốn gấp đôi."><input type="checkbox" id="rtAutoFix" checked> Tự dịch lại nếu vi phạm glossary</label>
+          <div class="row"><button class="primary" id="rtStart">Dịch lại chương này</button></div>
+          <div id="rtResult" class="small"></div>
+        </details>
       </div>
       <div class="tab hidden" id="tab-glossary">
         <p class="small muted">Nguồn → cách dịch ưu tiên. Được gửi kèm cho AI và dùng để kiểm tra nhất quán.</p>
@@ -353,6 +403,24 @@
     <div id="tbScanState" class="small"></div>
   </div>
 
+  <div class="card" id="tbWpCard">
+    <h3>3b. Đối chiếu với chương cũ đã đăng trên Wattpad</h3>
+    <p class="muted small">Extension trong Edge (bật VPN, mở một tab wattpad.com) đọc các chương cũ bạn đã đăng, tool ghép với <b>bản Hàn gốc</b> và nhờ AI
+      so với kho thuật ngữ. Chương cũ được coi là <b>đúng hơn</b>: chỗ khác nhau thành đề xuất “đổi theo chương cũ” để bạn duyệt ở mục 4.
+      Dữ liệu cào không được lưu lại. Tiêu đề đã đăng (vd <code>2201. Dark Moon (165)</code>) còn dùng để cập nhật <b>số thứ tự arc</b>.</p>
+    <div id="wsStories" class="small"></div>
+    <div class="row">
+      <label class="small">File Hàn gốc <input id="wsKo" type="text" style="width:420px" placeholder="đường dẫn file .txt hoặc .docx tiếng Hàn"></label>
+      <label class="small">Từ chương <input id="wsFrom" type="number" style="width:90px"></label>
+      <label class="small">Đến chương <input id="wsTo" type="number" style="width:90px"></label>
+      <span class="small muted">Model: dùng ô Model ở mục 3</span>
+      <span class="spacer"></span>
+      <button class="primary small" id="wsStart">🌐 Cào &amp; đối chiếu</button>
+      <button class="small hidden" id="wsStop">⏹ Dừng</button>
+    </div>
+    <div id="wsState" class="small"></div>
+  </div>
+
   <div class="card" id="tbPropCard">
     <div class="row-between"><h3>4. Đề xuất chờ duyệt <span id="tbPropCount" class="count"></span></h3>
       <div class="row">
@@ -376,7 +444,45 @@
   </div>
 </section>
 
+<dialog id="arcDialog" class="arc-dialog">
+  <form method="dialog" class="arc-head"><b>🏷 Arc truyện &amp; số thứ tự tiêu đề</b><button value="close" class="ghost">✕</button></form>
+  <p class="small muted">Tiêu đề = <code id="arcTplHint"></code>. Arc được nhận từ <b>tiêu đề tiếng Hàn</b> của chương; chương không có tiêu đề Hàn
+    thì theo arc của chương trước. Cột <b>Đã tới số</b> là số thứ tự (n) của chương gần nhất đã gán — sửa số này (ví dụ theo chương cũ nhất đã đăng trên
+    Wattpad) thì các chương sau tự đếm tiếp. Arc nhỏ mới tự được tạo khi gặp tiêu đề Hàn lạ.</p>
+  <div class="arc-scroll"><table class="arc-table"><thead><tr><th>Lớn</th><th>Tên arc (tiêu đề Việt)</th><th>Tên Hàn (cách nhau dấu “,”)</th>
+    <th>Đã tới số</th><th>Chương cuối</th><th></th></tr></thead><tbody id="arcRows"></tbody></table></div>
+  <div class="row small"><label>Mẫu tiêu đề <input id="arcTemplate" size="28"></label>
+    <button id="arcAdd" type="button">+ Thêm arc</button>
+    <button id="arcSeed" type="button" title="Quét các file Word của truyện để gán arc cho từng chương đã có">↻ Dựng từ file Word</button>
+    <span class="spacer"></span><button id="arcSave" class="primary" type="button">Lưu</button></div>
+  <div id="arcMsg" class="small muted"></div>
+</dialog>
+
+<dialog id="rtDialog" class="rt-dialog">
+  <div class="rt-wrap">
+    <div class="rt-head">
+      <div><b id="rtDlgTitle">Bản dịch lại</b><div class="muted small" id="rtDlgSub"></div></div>
+      <form method="dialog"><button class="ghost" title="Đóng — kết quả vẫn được giữ ở tab AI">✕</button></form>
+    </div>
+    <div class="rt-actions">
+      <button class="primary" data-rt="apply" title="Thay ngay bản đang sửa bằng bản dịch lại (Undo được)">⚡ Thay bản hiện tại</button>
+      <button data-rt="apply-save" title="Thay rồi lưu draft luôn">💾 Thay &amp; lưu draft</button>
+      <span class="sep"></span>
+      <button data-rt="copy">📋 Copy bản dịch</button>
+      <button data-rt="copy-title">📋 Copy tiêu đề</button>
+      <span class="sep"></span>
+      <label class="check small"><input type="checkbox" id="rtDlgTitleCb" class="rt-title-cb" checked> Cập nhật cả tiêu đề</label>
+      <label class="small lh-ctl">So sánh với
+        <select id="rtCompare"><option value="draft">Bản đang sửa</option><option value="ko">Bản Hàn</option><option value="none">Không</option></select>
+      </label>
+      <span class="spacer"></span>
+      <button class="ghost" data-rt="dismiss">Bỏ qua kết quả</button>
+    </div>
+    <div class="rt-body" id="rtDlgBody"></div>
+  </div>
+</dialog>
 <script type="module" src="/static/app.js"></script>
+<script type="module" src="/static/editor_tools.js"></script>
 <script type="module" src="/static/termbase.js"></script>
 <script type="module" src="/static/data.js"></script>
 <script type="module" src="/static/batch.js"></script>

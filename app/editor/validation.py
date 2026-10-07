@@ -10,7 +10,7 @@ _SPACE_BEFORE_PUNCT = re.compile(r"\s+[,.;:!?…](?!\.)")
 _DOUBLE_SPACE = re.compile(r"\S  +\S")
 # Leftovers from copying out of web pages / AI chats.
 _JUNK = re.compile(r"ads\s+by\s+\w+|dịch sang tiếng việt|tiếp tục dịch|^(?:grok|chatgpt|gemini|claude|copilot)(?:\s*[\d.]+)?$"
-                   r"|^dưới đây là.{0,200}bản dịch|^[A-Za-z0-9+/]{32,}={0,2}$",
+                   r"|^dưới đây là\b.{0,200}\bbản dịch|^[A-Za-z0-9+/]{32,}={0,2}$",
                    re.IGNORECASE)
 
 

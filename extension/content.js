@@ -1,5 +1,6 @@
 // Novel Translator – Wattpad Helper: runs on wattpad.com pages in the user's own browser.
 //  • On My Works: sends the list of the user's stories to the local tool.
+//  • When the tool has a scan task: reads the author's old published parts and hands the text to the tool (termbase).
 //  • When the tool has a publish task: opens the story → New part → fills title + content → saves
 //    → (publish mode) short countdown with a Cancel button → Publish → confirmation popup → reports the result.
 //    A "batch" is just a sequence of such tasks; the tool hands them out one at a time.
@@ -689,6 +690,63 @@
     location.href = partUrl(task, task.part_id);
   }
 
+  // ------------------------------------------------------------------ read old chapters (termbase scan task)
+  // The tool asks for the text of the author's published parts; this tab reads them through Wattpad's own
+  // endpoints (it has the VPN and the login) and hands them over. Nothing is changed on Wattpad.
+  let scanning = false;
+  const scanMsg = (task, data) => send({ type: "scan_event", id: task.id, data: { ...data, tab: TAB } });
+  const partNumber = (t) => { const m = /^\s*(?:EP\.?\s*\d+\s+)?(\d+)/i.exec(t || ""); return m ? +m[1] : null; };
+  function htmlToText(html) {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const ps = [...doc.querySelectorAll("p")].map((p) => p.textContent.trim());
+    return (ps.length ? ps : (doc.body.textContent || "").split("\n").map((l) => l.trim())).filter(Boolean).join("\n");
+  }
+  async function getJson(url) {
+    const r = await fetch(url, { credentials: "include" });
+    if (!r.ok) throw new Error(`HTTP ${r.status} (${url.split("?")[0]})`);
+    return r.json();
+  }
+  async function readPart(p) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const r = await fetch(`/apiv2/storytext?id=${p.id}`, { credentials: "include" });
+        if (r.ok) return { id: p.id, title: p.title, text: htmlToText(await r.text()) };
+        if (r.status === 429) await sleep(3000 * (attempt + 1));
+      } catch { await sleep(1000); }
+    }
+    return { id: p.id, title: p.title, text: "" };
+  }
+  async function runScan(task) {
+    scanning = true;
+    let cancel = false;
+    try {
+      for (const story of task.stories) {
+        if (cancel) break;
+        const name = story.title || story.id;
+        let parts = [];
+        try {
+          const j = await getJson(`/api/v3/stories/${story.id}?fields=parts(id,title,draft)`);
+          parts = (j.parts || []).filter((p) => !p.draft && partNumber(p.title) != null
+            && (task.from == null || partNumber(p.title) >= task.from) && (task.to == null || partNumber(p.title) <= task.to));
+        } catch (e) { await scanMsg(task, { error: `${name}: ${e.message}` }); }
+        for (let i = 0; i < parts.length && !cancel; i += 4) {
+          const out = await Promise.all(parts.slice(i, i + 4).map(readPart));
+          const r = await send({ type: "scan_chunk", id: task.id, data: { parts: out } });
+          if (!r.ok) { await scanMsg(task, { error: `Không gửi được về tool: ${r.error}`, done: true }); return; }
+          cancel = !!r.data.cancel;
+          banner(`Đang đọc “${name}”: ${Math.min(i + 4, parts.length)}/${parts.length} chương…`, true, () => { cancel = true; });
+          await sleep(300);
+        }
+        await scanMsg(task, { story_done: true, message: `Đã đọc xong “${name}” (${parts.length} chương).` });
+      }
+      await scanMsg(task, { done: true });
+      banner(cancel ? "Đã dừng đọc chương." : "✔ Đã đọc xong — tool đang so sánh thuật ngữ.");
+      hideBannerLater(6000);
+    } catch (e) {
+      await scanMsg(task, { error: String(e.message || e), done: true });
+    } finally { scanning = false; }
+  }
+
   async function tick() {
     if (busy) return;
     busy = true;
@@ -700,6 +758,10 @@
       }
       if (location.origin !== new URL(cfg.base).origin) return;
       await maybeSendStories();
+      if (!scanning) {
+        const sc = await send({ type: "scan", tab: TAB });
+        if (sc.ok && sc.data.task) runScan(sc.data.task);   // long job: not awaited, publishing keeps working
+      }
       const r = await send({ type: "task", tab: TAB });
       const task = r.ok ? r.data.task : null;
       if (!task) bannerPrefix = "";
