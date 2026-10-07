@@ -104,6 +104,14 @@ input, select { background: var(--panel); border: 1px solid var(--border); borde
 .findbar input.bad { border-color: var(--err-border); background: var(--err-bg); }
 .findbar .check { display: inline-flex; flex-direction: row; align-items: center; gap: 4px; cursor: pointer; }
 .find-count { min-width: 90px; font-variant-numeric: tabular-nums; }
+.add-chapter { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px; }
+.add-chapter summary { cursor: pointer; }
+.add-chapter-form { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.add-chapter-form label { display: flex; flex-direction: column; gap: 4px; }
+.add-chapter-form .grow { flex: 1; min-width: 200px; }
+.add-chapter-form .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.add-chapter-form textarea { width: 100%; font: 13px/1.5 var(--font-vi); background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; resize: vertical; }
+@media (max-width: 800px) { .add-chapter-form .two-col { grid-template-columns: 1fr; } }
 /* AI re-translation result */
 .rt-summary .rt-ok { font-weight: 600; color: var(--ok); }
 .rt-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }

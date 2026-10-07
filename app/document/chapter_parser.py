@@ -232,6 +232,19 @@ def _add_bare_headings(blocks: list[Block], headings: list[tuple[int, HeadingMat
     return merged, {i for i, _ in accepted}
 
 
+MISSING_WARNING_MARK = "số chương trong dãy"
+
+
+def missing_warning(nums: list[int]) -> tuple[list[int], list[str]]:
+    """Chapter numbers absent from the sorted `nums` range, plus the matching warning (as a 0/1-item list)."""
+    have = set(nums)
+    missing = [x for x in range(nums[0], nums[-1] + 1) if x not in have] if nums else []
+    if not missing:
+        return [], []
+    preview = ", ".join(map(str, missing[:15])) + ("..." if len(missing) > 15 else "")
+    return missing, [f"Thiếu {len(missing)} {MISSING_WARNING_MARK} {nums[0]}–{nums[-1]}: {preview}"]
+
+
 def parse_chapters(blocks: list[Block]) -> ParseResult:
     candidates = [(i, m) for i, b in enumerate(blocks) if (m := match_heading(b))]
     headings, rejected = _filter_weak(candidates)
@@ -326,11 +339,7 @@ def parse_chapters(blocks: list[Block]) -> ParseResult:
                 and entry.vi[0].heading_index < entry.ko[0].heading_index:
             entry.warnings.append(f"Bản Việt chương {n} nằm TRƯỚC bản Hàn — kiểm tra lại thứ tự.")
 
-    nums = sorted(chapters)
-    missing = [x for x in range(nums[0], nums[-1] + 1) if x not in chapters]
-    if missing:
-        preview = ", ".join(map(str, missing[:15])) + ("..." if len(missing) > 15 else "")
-        warnings.append(f"Thiếu {len(missing)} số chương trong dãy {nums[0]}–{nums[-1]}: {preview}")
+    warnings += missing_warning(sorted(chapters))[1]
     log.info("Detected %d chapters (%d headings)", len(chapters), len(sections))
     return ParseResult(chapters, sections, warnings)
 

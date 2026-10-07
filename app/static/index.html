@@ -83,6 +83,23 @@
       <span class="dot st-PUBLISHED"></span>đã đăng
     </div>
     <div id="chapterList" class="chapter-list"></div>
+    <details class="add-chapter" id="addChapter">
+      <summary><b>➕ Thêm chương bị thiếu</b> <span class="muted small" id="missingInfo"></span></summary>
+      <p class="small muted">Dán nội dung (mỗi dòng = một đoạn). Chương chỉ được lưu trong tool — file Word không bị sửa.
+        Chỉ có bản Hàn thì thêm xong bấm <b>🔁 Dịch lại chương</b> để AI dịch.</p>
+      <div id="missingChips" class="chapter-list"></div>
+      <form id="addChapterForm" class="add-chapter-form">
+        <div class="row">
+          <label class="small">Số chương <input id="acNumber" type="number" min="1" max="9999" required></label>
+          <label class="small grow">Tiêu đề (tuỳ chọn) <input id="acTitle" placeholder="mặc định: Chương N"></label>
+        </div>
+        <div class="two-col">
+          <label class="small">Bản tiếng Hàn <textarea id="acKo" rows="8" spellcheck="false"></textarea></label>
+          <label class="small">Bản tiếng Việt <textarea id="acVi" rows="8" spellcheck="false"></textarea></label>
+        </div>
+        <div class="row"><button type="submit" class="primary">Thêm &amp; mở chương</button></div>
+      </form>
+    </details>
   </div>
 
   <details class="card hidden" id="batchCard">

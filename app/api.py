@@ -16,7 +16,7 @@ from .editor import arcs
 from .editor.chapter_editor import service
 from .editor.glossary import GlossaryEntry
 from .editor.validation import validate_translation
-from .errors import NotFound
+from .errors import ChapterError, NotFound
 from .logging_setup import get_logger
 from .publishing import publish_service
 from .publishing.jobs import jobs
@@ -40,6 +40,12 @@ class LoadReq(BaseModel):
 class DraftReq(BaseModel):
     blocks: list[Block]
     title: Optional[str] = None
+
+
+class AddChapterReq(BaseModel):
+    ko_text: str = Field("", max_length=400_000)
+    vi_text: str = Field("", max_length=400_000)
+    title: str = Field("", max_length=300)
 
 
 class StatusReq(BaseModel):
@@ -79,6 +85,13 @@ def project_index(pid: str):
 def load_chapter(pid: str, number: int, req: LoadReq | None = None):
     req = req or LoadReq()
     return service.load(pid, number, req.ko_choice, req.vi_choice)
+
+
+@router.post("/projects/{pid}/chapters/{number}/add")
+def add_chapter(pid: str, number: int, req: AddChapterReq):
+    if not 1 <= number <= 9999:
+        raise ChapterError("Số chương phải từ 1 đến 9999.", code="BAD_NUMBER")
+    return service.add_missing(pid, number, req.ko_text, req.vi_text, req.title)
 
 
 @router.get("/projects/{pid}/chapters/{number}")

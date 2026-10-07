@@ -107,3 +107,26 @@ def test_library_and_last_chapter(client, book):
     assert p["last_chapter"] == 12 and p["chapter_count"] == 6 and p["chapter_range"] == [10, 15]
     assert p["status_counts"] == {"LOADED": 1, "REVIEWED": 1} and p["source_exists"]
     assert client.get("/api/projects").json()[0]["id"] == pid          # most recently used first
+
+
+def test_add_missing_chapter(client, book):
+    with open(book, "rb") as f:
+        pid = client.post("/api/projects/upload", files={"file": ("add-book.docx", f)}).json()["project"]["id"]
+    add = lambda n, **kw: client.post(f"/api/projects/{pid}/chapters/{n}/add", json=kw)  # noqa: E731
+
+    assert err(add(12, vi_text="x")) == "CHAPTER_EXISTS"                      # already in the Word file
+    assert err(add(17)) == "EMPTY_CHAPTER"
+    idx = add(17, ko_text="제 17 화\n\n안녕하세요.", vi_text="Xin chào.\nTạm biệt.", title="Chương 17: Thêm tay").json()
+    assert idx["missing"] == [16] and any("Thiếu 1 " in w for w in idx["warnings"])
+    c17 = next(c for c in idx["chapters"] if c["number"] == 17)
+    assert c17["manual"] and c17["has_ko"] and c17["has_vi"]
+    assert err(add(17, vi_text="y")) == "CHAPTER_EXISTS"                      # no silent overwrite
+
+    ch = client.post(f"/api/projects/{pid}/chapters/17/load", json={}).json()
+    assert ch["title"] == "Chương 17: Thêm tay" and len(ch["ko_blocks"]) == 2 and len(ch["draft"]) == 2
+    assert client.put(f"/api/projects/{pid}/chapters/17/draft", json={"blocks": ch["draft"][:1]}).json()["status"] == "EDITING"
+    assert len(client.post(f"/api/projects/{pid}/chapters/17/load", json={}).json()["draft"]) == 1   # edits survive a reload
+
+    idx = add(16, vi_text="Chỉ có bản Việt.").json()
+    assert idx["missing"] == [] and not any("Thiếu" in w for w in idx["warnings"])
+    assert idx["project"]["chapter_range"] == [10, 17]

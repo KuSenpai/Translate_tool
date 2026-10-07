@@ -12,10 +12,10 @@ from pathlib import Path
 from typing import Optional
 
 from .. import config
-from ..document.chapter_parser import ParseResult, extract_chapter, parse_chapters
+from ..document.chapter_parser import MISSING_WARNING_MARK, ParseResult, extract_chapter, missing_warning, parse_chapters
 from ..document.docx_reader import read_docx
 from ..document.docx_writer import write_chapter_docx
-from ..document.models import Block
+from ..document.models import Block, Run
 from ..errors import ChapterError, DocxError, StateError
 from ..logging_setup import get_logger
 from ..storage.project_state import ProjectStore, content_hash, now_iso, store as default_store
@@ -117,11 +117,40 @@ class ChapterService:
         chapters = result.summary()
         for c in chapters:
             c["status"] = (statuses.get(c["number"]) or {}).get("status")
+        for n in statuses.keys() - result.chapters.keys():          # chapters added by hand (not in the Word file)
+            rec = self.store.get_chapter(pid, n)
+            if rec and rec.get("manual"):
+                chapters.append({"number": n, "confidence": "high", "has_ko": bool(rec["ko_blocks"]),
+                                 "has_vi": bool(rec["original_vi"]), "manual": True, "warnings": [],
+                                 "title": rec.get("vi_title", ""), "status": rec["status"]})
+        chapters.sort(key=lambda c: c["number"])
+        missing, gap = missing_warning([c["number"] for c in chapters])
+        warnings = [w for w in result.warnings if MISSING_WARNING_MARK not in w] + gap
         stats = {"chapter_count": len(chapters),
                  "chapter_range": [chapters[0]["number"], chapters[-1]["number"]] if chapters else None,
                  "last_opened_at": now_iso()}
         project = self.store.update_project(pid, **stats)
-        return {"project": project, "chapters": chapters, "warnings": result.warnings}
+        return {"project": project, "chapters": chapters, "warnings": warnings, "missing": missing[:300]}
+
+    def add_missing(self, pid: str, number: int, ko_text: str, vi_text: str, title: str = "") -> dict:
+        """Create a chapter that is not in the Word file from pasted text (one paragraph per line).
+        The Word file is never touched; the chapter lives only in the project store."""
+        _, result = self._parsed(pid)
+        if number in result.chapters or self.store.get_chapter(pid, number):
+            raise ChapterError(f"Chương {number} đã có — hãy mở chương đó để sửa.", code="CHAPTER_EXISTS")
+        para = lambda text: [Block(runs=[Run(text=t.strip())]) for t in text.splitlines() if t.strip()]  # noqa: E731
+        ko, vi = _dump(para(ko_text)), _dump(para(vi_text))
+        if not ko and not vi:
+            raise ChapterError("Hãy dán bản tiếng Hàn và/hoặc bản tiếng Việt của chương.", code="EMPTY_CHAPTER")
+        title = title.strip() or arcs.assigned_title(pid, number) or default_title(number, "")
+        self.store.save_chapter(pid, number, {
+            "number": number, "manual": True, "status": Status.LOADED.value, "draft": vi, "original_vi": vi,
+            "ko_blocks": ko, "title": title, "exports": [], "publish_history": [], "status_history": [],
+            "created_at": now_iso(), "source_hash": content_hash(vi), "ko_choice": 0, "vi_choice": 0,
+            "ko_options": 1, "vi_options": 1, "confidence": "high", "warnings": [], "ko_title": "", "vi_title": "",
+            "ko_heading": "", "vi_heading": ""})
+        log.info("Added missing chapter %d by hand (ko=%d, vi=%d blocks)", number, len(ko), len(vi))
+        return self.index(pid)
 
     # --- chapter lifecycle ------------------------------------------------------
     def _require(self, pid: str, number: int) -> dict:
@@ -132,6 +161,10 @@ class ChapterService:
 
     def load(self, pid: str, number: int, ko_choice: int = 0, vi_choice: int = 0) -> dict:
         blocks, result = self._parsed(pid)
+        rec = self.store.get_chapter(pid, number)
+        if rec and rec.get("manual") and number not in result.chapters:
+            self.store.update_project(pid, last_chapter=number, last_opened_at=now_iso())
+            return self._with_issues(pid, dict(rec, notices=["Chương này được thêm thủ công (không có trong file Word)."]))
         content = extract_chapter(blocks, result, number, ko_choice, vi_choice)
         original = _dump(content.vi_blocks)
         src_hash = content_hash(original)

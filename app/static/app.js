@@ -182,11 +182,33 @@ function setIndex(idx) {
   if (!idx.chapters.length) { list.innerHTML = `<div class="alert error">Không tìm thấy chương nào trong file.</div>`; return; }
   list.innerHTML = idx.chapters.map((c) => {
     const tip = [c.title, !c.has_ko && "Thiếu bản Hàn", !c.has_vi && "Thiếu bản Việt", ...c.warnings].filter(Boolean).join("\n");
-    return `<span class="chip conf-${c.confidence}" data-n="${c.number}" title="${esc(tip)}">${c.status ? `<span class="dot st-${c.status}"></span>` : ""}${c.number}</span>`;
+    return `<span class="chip conf-${c.confidence}" data-n="${c.number}" title="${esc(c.manual ? `Thêm thủ công\n${tip}` : tip)}">${c.status ? `<span class="dot st-${c.status}"></span>` : ""}${c.number}${c.manual ? " ✎" : ""}</span>`;
   }).join("");
   list.querySelectorAll(".chip").forEach((el) => el.addEventListener("click", () => loadChapter(+el.dataset.n)));
+  renderMissing(idx.missing || []);
   show("Home");
   loadRecent();  // refresh library progress / active book
+}
+
+function renderMissing(missing) {
+  $("#addChapter").classList.toggle("hidden", !S.project);
+  $("#missingInfo").textContent = missing.length ? `— đang thiếu ${missing.length} số trong dãy` : "— không thiếu số nào trong dãy (vẫn thêm được chương ngoài dãy)";
+  $("#missingChips").innerHTML = missing.slice(0, 60).map((n) => `<span class="chip conf-low" data-n="${n}" title="Điền số ${n} vào form">${n}</span>`).join("") +
+    (missing.length > 60 ? `<span class="muted small">… và ${missing.length - 60} số nữa</span>` : "");
+  $("#missingChips").querySelectorAll(".chip").forEach((el) => el.addEventListener("click", () => { $("#acNumber").value = el.dataset.n; $("#acKo").focus(); }));
+  if (missing.length && !$("#acNumber").value) $("#acNumber").value = missing[0];
+}
+
+async function addChapter(ev) {
+  ev.preventDefault();
+  const n = +$("#acNumber").value;
+  try {
+    const idx = await withBusy("Đang thêm chương…", () => api("POST", `/api/projects/${S.project.id}/chapters/${n}/add`,
+      { ko_text: $("#acKo").value, vi_text: $("#acVi").value, title: $("#acTitle").value }));
+    $("#acKo").value = $("#acVi").value = $("#acTitle").value = ""; $("#acNumber").value = "";
+    setIndex(idx); toast(`Đã thêm chương ${n}`, "ok");
+    loadChapter(n);
+  } catch (e) { fail(e); }
 }
 
 async function openProject(id) {
@@ -849,6 +871,7 @@ function init() {
   });
   $("#recentProjects").addEventListener("change", (e) => e.target.value && openProject(e.target.value));
   $("#reloadBtn").addEventListener("click", () => S.project && openProject(S.project.id));
+  $("#addChapterForm").addEventListener("submit", addChapter);
   $("#chapterForm").addEventListener("submit", (e) => { e.preventDefault(); loadChapter(+$("#chapterInput").value); });
 
   $("#backHome").addEventListener("click", () => {
