@@ -1,5 +1,7 @@
 # Novel Translator
 
+🇻🇳 Tiếng Việt · [🇬🇧 English](README.en.md)
+
 Công cụ web chạy local để xử lý và đăng chương truyện dịch Hàn → Việt:
 
 ```
@@ -66,7 +68,7 @@ Trạng thái chương: `LOADED → EDITING → REVIEWED → READY_TO_PUBLISH �
 1. Thêm `ANTHROPIC_API_KEY=sk-ant-...` vào `.env` (tạo key ở console.anthropic.com), khởi động lại tool.
 2. Bấm **🤖 Dịch AI** → kéo thả file truyện tiếng Hàn `.txt` hoặc `.docx` (nhiều chương).
 3. Chọn model (Opus 5.5 chất lượng cao nhất; Sonnet 5.5 rẻ ~2 lần; Haiku 4.5 rẻ nhất), khoảng chương, glossary,
-   chỉnh **Hướng dẫn dịch** (văn phong, xưng hô, mức độ từ ngữ 18+) → **Bắt đầu dịch**. Có ước tính chi phí trước khi chạy
+   chỉnh **Hướng dẫn dịch** (văn phong, xưng hô) → **Bắt đầu dịch**. Có ước tính chi phí trước khi chạy
    và chi phí thật trong lúc chạy.
 4. Kết quả `output/translations/<tên>_vi_<id>.docx` (+ `.txt` nếu đầu vào là .txt): mỗi chương tiếng Hàn, ngay dưới là bản
    dịch — đúng định dạng editor đọc được (**Mở trong editor** để soát và sửa, rồi đăng Wattpad như bình thường).
@@ -74,9 +76,8 @@ Trạng thái chương: `LOADED → EDITING → REVIEWED → READY_TO_PUBLISH �
 - Chạy nền, lưu sau từng chương: tạm dừng / tiếp tục / dịch lại chương lỗi; tắt tool rồi mở lại vẫn tiếp tục được.
 - Chương đã có bản Việt (file song ngữ dịch dở) được bỏ qua.
 - Tên nhân vật/thuật ngữ mới được AI ghi lại và dùng cho các chương sau để nhất quán.
-- Prompt cho phép dịch đầy đủ nội dung 18+ và từ thô tục giữa các nhân vật trưởng thành. Claude vẫn có thể từ chối một số
-  đoạn (ví dụ nội dung tình dục liên quan đến trẻ vị thành niên); chương đó được đánh dấu lỗi `AI_REFUSED` và giữ nguyên
-  bản Hàn trong file kết quả.
+- Nếu AI từ chối hoặc bộ lọc an toàn chặn một chương, chương đó được đánh dấu lỗi `AI_REFUSED` và giữ nguyên bản Hàn trong
+  file kết quả — dịch lại chương đó bằng model khác.
 
 ### Dùng gói Claude (Pro/Max) thay cho API
 
@@ -106,20 +107,20 @@ không dùng công cụ, tự kiểm tra). Muốn sửa: chép file đó thành 
 tự yêu cầu dịch lại chương đó một lần kèm lời nhắc lỗi.
 
 `agy` chạy trong một thư mục trống ngoài dự án (có `GEMINI.md` cấm dùng công cụ) và không bật quyền tự duyệt, nên agent không
-đọc/ghi file của bạn. Hết hạn mức → job tạm dừng như Claude Code. Gemini có bộ lọc an toàn riêng: vài cảnh 18+ có thể bị chặn
-(`AI_REFUSED`) — dịch lại các chương đó bằng model Claude.
+đọc/ghi file của bạn. Hết hạn mức → job tạm dừng như Claude Code. Gemini có bộ lọc an toàn riêng: vài đoạn có thể bị chặn
+(`AI_REFUSED`) — dịch lại các chương đó bằng model khác.
 
-### Dịch bằng Grok (xAI) — cho truyện 18+
+### Dịch bằng Grok (xAI)
 
-Chọn model **Grok (xAI) · mạnh nhất** hoặc **Grok (xAI) · rẻ** (ở 🤖 Dịch AI và 📚 Thuật ngữ). Grok ít chặn cảnh 18+ hơn
-Claude/Gemini nên hợp để dịch lại các chương bị `AI_REFUSED`. Tính tiền theo token trên tài khoản xAI.
+Chọn model **Grok (xAI) · mạnh nhất** hoặc **Grok (xAI) · rẻ** (ở 🤖 Dịch AI và 📚 Thuật ngữ). Hợp để làm model dự phòng
+dịch lại các chương bị `AI_REFUSED`. Tính tiền theo token trên tài khoản xAI.
 
 1. Lấy API key ở console.x.ai, nạp credit.
 2. Thêm vào `.env`: `XAI_API_KEY=xai-...` rồi khởi động lại tool.
 3. Chọn model Grok trong tool → tool gọi `GET /v1/models` kiểm tra key và báo nếu slug model không có.
    Mặc định `grok-4.7` (mạnh) / `grok-4.3` (rẻ); đổi bằng `XAI_MODEL` / `XAI_MODEL_FAST`.
 
-Tool dùng chung prompt dịch với Claude (`SYSTEM_PROMPT` + *Hướng dẫn văn phong*, đã có mục cảnh 18+), gọi qua API tương thích OpenAI
+Tool dùng chung prompt dịch với Claude (`SYSTEM_PROMPT` + *Hướng dẫn văn phong*), gọi qua API tương thích OpenAI
 (`https://api.x.ai/v1`, đổi bằng `XAI_BASE_URL`). Sai số đoạn hoặc sót chữ Hàn thì tự dịch lại chương một lần. Hết credit → job tạm dừng,
 nạp thêm rồi bấm **Tiếp tục**.
 
@@ -151,8 +152,8 @@ Mỗi lần gọi có ~14k token chi phí cố định của agent (phần lớn
 
 Trong trình sửa một chương, bấm **🔁 Dịch lại chương** (hoặc mở mục *Dịch lại cả chương bằng AI* ở tab ✨ AI): chọn model (Claude, Claude Code,
 Gemini, Grok…), mức suy luận, thêm yêu cầu riêng nếu muốn → tool dịch lại cả chương từ **bản Hàn**, kèm glossary, ghi chú truyện và
-đoạn cuối chương trước. Kết quả chỉ hiện để xem; bấm **Áp dụng** mới thay bản đang sửa (có thể Undo, rồi Save Draft). Hợp để thử Grok
-cho chương bị AI khác từ chối vì cảnh 18+.
+đoạn cuối chương trước. Kết quả chỉ hiện để xem; bấm **Áp dụng** mới thay bản đang sửa (có thể Undo, rồi Save Draft). Hợp để thử model khác
+cho chương bị `AI_REFUSED`.
 
 ### Dịch qua OmniRoute (cổng AI cục bộ)
 

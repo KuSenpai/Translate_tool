@@ -428,7 +428,7 @@ function consistencyHtml(r) {
   const li = (arr, f) => arr.length ? `<ul class="small" style="margin:2px 0 0;padding-left:18px">${arr.map(f).join("")}</ul>` : "";
   const ctx = (c.previous_chapters || []).length ? `đối chiếu chương ${c.previous_chapters.join(", ")}` : "chưa có chương trước để đối chiếu";
   return `<h5>Kiểm tra thuật ngữ</h5><div class="reason">${c.terms_in_chapter ? `✔ ${c.terms_ok}/${c.terms_in_chapter} thuật ngữ glossary khớp` : "Không có thuật ngữ glossary trong chương này"}
-      · ${ctx}${c.hints_used ? ` · ${c.hints_used} gợi ý từ chương cũ` : ""}${c.retried ? " · đã tự dịch lại 1 lần để sửa lỗi" : ""}
+      · ${ctx}${c.hints_used ? ` · ${c.hints_used} gợi ý từ chương cũ` : ""}${c.examples_used ? ` · ${c.examples_used} câu xưng hô/thuật ngữ mẫu từ chương cũ` : ""}${c.retried ? " · đã tự dịch lại 1 lần để sửa lỗi" : ""}
       ${li(warns, (i) => `<li class="muted">${i.block != null ? `¶${i.block + 1}: ` : ""}${esc(i.message)}</li>`)}
       ${li(c.terms_missing || [], (m) => `<li class="muted">Thiếu “${esc(m.target)}” (${esc(m.source)})</li>`)}
       ${li(c.new_term_conflicts || [], (m) => `<li style="color:#c07a00">Thuật ngữ mới “${esc(m.source)} → ${esc(m.target)}”: chương ${m.chapter} đã có từ này nhưng không dùng cách dịch đó — kiểm tra lại.</li>`)}</div>`;

@@ -23,6 +23,7 @@ from ..errors import AppError, ChapterError
 from ..logging_setup import get_logger
 from ..storage.project_state import store
 from .chunked import translate_parallel
+from .consistency import with_examples
 from .novel_translator import MODELS, cost_usd, make_translator
 from .termbase import scanner
 from .translation_jobs import get_style
@@ -31,7 +32,7 @@ log = get_logger("RETRANSLATE")
 
 _TITLE_PREFIX = re.compile(r"^\s*(?:ep\.?\s*\d+\s+)?(?:t[ậa]p|ch(?:ư|u)(?:ơ|o)ng|chapter)?\s*\d+\s*[.:\-–—]?\s*", re.IGNORECASE)
 _HANGUL = re.compile(r"[가-힣]")
-PREVIOUS = 3          # earlier chapters used for context and for checking new terms
+PREVIOUS = 5          # earlier chapters used for context, address examples and for checking new terms
 
 
 def _text(blocks: list[dict]) -> str:
@@ -60,7 +61,7 @@ def previous_chapters(pid: str, number: int, count: int = PREVIOUS) -> list[dict
             except AppError:
                 continue
         if ko and vi and _text(vi):
-            out.append({"number": n, "ko": _text(ko), "vi": _text(vi), "vi_paragraphs": _paragraphs(vi)})
+            out.append({"number": n, "ko": _text(ko), "vi": _text(vi), "ko_paragraphs": _paragraphs(ko), "vi_paragraphs": _paragraphs(vi)})
     return out
 
 
@@ -130,8 +131,9 @@ def retranslate_chapter(pid: str, number: int, *, model: str, effort: str = "med
     korean = "\n".join(paragraphs + [heading])
 
     glossary_text, entries, hints = _glossary_context(pid, korean)
-    notes = store.get_notes(pid)
+    glossary_all = store.get_glossary(pid)
     previous = previous_chapters(pid, number)
+    notes, examples = with_examples(store.get_notes(pid), previous, korean, [e["source"] for e in glossary_all])
     tail = [p for c in reversed(previous) for p in c["vi_paragraphs"][-4:]][-10:]        # oldest → newest
     style = get_style()
     if instruction.strip():
@@ -141,7 +143,6 @@ def retranslate_chapter(pid: str, number: int, *, model: str, effort: str = "med
              number, model, len(paragraphs), len(entries), len(previous))
     translator = make_translator(model, effort)
     translator.count_tolerance = 0.05      # the user reviews the preview: a few merged paragraphs are not worth another 3 minutes
-    glossary_all = store.get_glossary(pid)
 
     def attempt(extra: str):
         r = translate_parallel(translator, heading=heading, paragraphs=paragraphs, glossary_text=glossary_text, prev_tail=tail,
@@ -163,7 +164,7 @@ def retranslate_chapter(pid: str, number: int, *, model: str, effort: str = "med
 
     vi_text = "\n".join(result.paragraphs)
     known = {e["source"] for e in glossary_all}
-    report = {**_term_report(entries, korean, vi_text), "hints_used": hints, "previous_chapters": [c["number"] for c in previous],
+    report = {**_term_report(entries, korean, vi_text), "hints_used": hints, "examples_used": examples, "previous_chapters": [c["number"] for c in previous],
               "retried": retried, "parallel_parts": parallel, "new_term_conflicts": _new_term_conflicts(result.new_terms, known, previous)}
     vi_title = _TITLE_PREFIX.sub("", result.heading or "").strip()
     return {

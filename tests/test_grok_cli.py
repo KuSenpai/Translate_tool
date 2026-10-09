@@ -219,7 +219,7 @@ def test_retranslate_flags_new_term_conflict_with_previous_chapter(client, book,
     from app.ai import retranslate
     pid = _project(client, book, "rt-c.docx")
     client.post(f"/api/projects/{pid}/chapters/13/load", json={})
-    prev = [{"number": 12, "ko": "이전 장에서 새로운 이야기가 시작되었다.", "vi": "Câu chuyện Hoàn Toàn Khác bắt đầu.", "vi_paragraphs": ["x"]}]
+    prev = [{"number": 12, "ko": "이전 장에서 새로운 이야기가 시작되었다.", "vi": "Câu chuyện Hoàn Toàn Khác bắt đầu.", "ko_paragraphs": ["x"], "vi_paragraphs": ["x"]}]
     monkeypatch.setattr(retranslate, "previous_chapters", lambda pid, number, count=3: prev)
     _fake_translator(monkeypatch, [["Đoạn một."] * 50])
     out = client.post(f"/api/projects/{pid}/chapters/13/retranslate", json={"model": "claude-opus-5-5"}).json()

@@ -230,10 +230,16 @@ class GrokCLIJSON:
         log.info("grok cli call started (account=%s, effort=%s, prompt %d chars) — a long chapter takes several minutes",
                  acc["name"], self.effort or "default", prompt_file.stat().st_size)
         try:
-            out = subprocess.run(self._cmd(prompt_file, schema), capture_output=True, text=True, encoding="utf-8",
-                                 errors="replace", timeout=1320, cwd=wd, env=_env(acc["home"]))
-        except subprocess.TimeoutExpired:
-            raise LLMTimeout("Grok CLI không trả kết quả sau 22 phút.")
+            # A healthy call takes 1–6 min; a hung stream sits idle forever, so cut it at 10 min and retry once.
+            for attempt in (1, 2):
+                try:
+                    out = subprocess.run(self._cmd(prompt_file, schema), capture_output=True, text=True, encoding="utf-8",
+                                         errors="replace", timeout=600, cwd=wd, env=_env(acc["home"]))
+                    break
+                except subprocess.TimeoutExpired:
+                    if attempt == 2:
+                        raise LLMTimeout("Grok CLI không trả kết quả sau 2 lần chờ 10 phút.")
+                    log.warning("grok cli hung >10 min (account=%s) — retrying once", acc["name"])
         except OSError as e:
             raise LLMError(f"Không chạy được Grok CLI: {e}", code="GROK_CLI_MISSING")
         finally:
@@ -250,9 +256,12 @@ class GrokCLIJSON:
         if stop == "max_tokens":
             raise LLMEmptyResponse("Kết quả bị cắt (quá dài cho một lần gọi).", details={"usage": usage})
         data = res.get("structuredOutput") or res.get("structured_output")
+        if isinstance(data, str):
+            data = _parse_json(data)
         if not isinstance(data, dict):
             data = _parse_json(str(res.get("text") or ""))
         if not isinstance(data, dict):
+            log.warning("grok cli bad JSON (stop=%s, keys=%s): %.800s", stop, list(res), out.stdout)
             raise LLMEmptyResponse("Grok trả về dữ liệu không đúng định dạng JSON.", details={"usage": usage})
         model_used = f"grok-cli:{next(iter(res.get('modelUsage') or {}), None) or self.slug or 'default'}"
         log.info("grok cli ok (account=%s): model=%s in=%s out=%s cost=%s", acc["name"], model_used, usage["input_tokens"], usage["output_tokens"],

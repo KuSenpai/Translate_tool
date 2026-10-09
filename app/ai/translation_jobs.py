@@ -281,6 +281,20 @@ class TranslationManager:
         auto = [{"source": s, "target": t} for s, t in job["auto_terms"].items() if s not in known]
         return glossary_prompt(entries_for_text(entries + auto, korean_text)), notes
 
+    def _with_examples(self, job: dict, number: int, korean: str, notes: str) -> str:
+        """Add how the same characters/terms were rendered in the project's earlier chapters (see consistency.py)."""
+        pid = job.get("glossary_project")
+        if not pid:
+            return notes
+        try:
+            from ..storage.project_state import store
+            from .consistency import with_examples
+            from .retranslate import previous_chapters      # lazy: retranslate imports this module
+            return with_examples(notes, previous_chapters(pid, number), korean, [e["source"] for e in store.get_glossary(pid)])[0]
+        except Exception as e:      # the examples are an aid: never fail the chapter because of them
+            log.warning("No consistency examples for chapter %d: %s", number, e)
+            return notes
+
     def _prev_tail(self, job: dict, ch: dict) -> list[str]:
         order = [c["idx"] for c in job["chapters"]]
         pos = order.index(ch["idx"])
@@ -323,6 +337,7 @@ class TranslationManager:
                 self._save(j)
                 glossary, notes = self._glossary_text(j, "\n".join(paragraphs + [src.heading]))
                 tail, style = self._prev_tail(j, c), j["style"]
+            notes = self._with_examples(j, src.number, "\n".join(paragraphs + [src.heading]), notes)
             log.info("Translating chapter %d (%d paragraphs)", src.number, len(paragraphs))
             result, error, code, usage = None, None, None, {}
             for attempt in range(3):
